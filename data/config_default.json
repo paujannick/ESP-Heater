@@ -18,5 +18,9 @@
   "calibration": {
     "acs_zero": 2.5,
     "acs_sensitivity": 0.1
+  },
+  "sensors": {
+    "inside": null,
+    "exhaust": null
   }
 }
