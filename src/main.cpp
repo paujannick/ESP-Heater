@@ -6,8 +6,7 @@
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <AsyncJson.h>
-#include <AsyncElegantOTA.h>
-#include <WiFiManager.h>
+#include <ElegantOTA.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <Wire.h>
@@ -23,6 +22,7 @@
 
 #include "pins.h"
 #include "config_manager.h"
+#include "wifi_support.h"
 
 static constexpr uint16_t SCREEN_WIDTH = 128;
 static constexpr uint16_t SCREEN_HEIGHT = 64;
@@ -374,9 +374,7 @@ void handleEncoder() {
       pressedAt = millis();
     } else if (millis() - pressedAt > 1500) {
       Serial.println("[ENC] Long press detected, forcing WiFi portal");
-      WiFiManager wm;
-      wm.resetSettings();
-      ESP.restart();
+      resetWiFiSettingsAndReboot();
     }
   } else {
     pressedAt = 0;
@@ -511,12 +509,7 @@ void setupSensors() {
 }
 
 void configureWiFi() {
-  WiFi.mode(WIFI_STA);
-  WiFiManager wm;
-  wm.setClass("invert");
-  wm.setHostname("Sunster-Heater");
-
-  if (!wm.autoConnect("SunsterSetup", "sunster123")) {
+  if (!autoConfigureWiFi("Sunster-Heater", "SunsterSetup", "sunster123")) {
     Serial.println("[WIFI] Failed to connect, restarting");
     delay(3000);
     ESP.restart();
@@ -721,7 +714,7 @@ void setupWebServer() {
 
   server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
 
-  AsyncElegantOTA.begin(&server);
+  ElegantOTA.begin(&server);
   server.begin();
 }
 
@@ -733,15 +726,13 @@ void initTelegram() {
   }
   extern const char TELEGRAM_CERTIFICATE_ROOT[] PROGMEM;
   secureClient.setCACert(TELEGRAM_CERTIFICATE_ROOT);
-  telegramBot = std::make_unique<UniversalTelegramBot>(cfg.token, secureClient);
+  telegramBot.reset(new UniversalTelegramBot(cfg.token, secureClient));
 }
 
 void checkWifiResetFlag() {
   if (LittleFS.exists("/wifi_reset.flag")) {
     LittleFS.remove("/wifi_reset.flag");
-    WiFiManager wm;
-    wm.resetSettings();
-    ESP.restart();
+    resetWiFiSettingsAndReboot();
   }
 }
 
@@ -814,4 +805,5 @@ void loop() {
   }
 
   handleTelegramMessages();
+  ElegantOTA.loop();
 }
