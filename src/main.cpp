@@ -12,6 +12,7 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <cmath>
+#include <cstring>
 #include <driver/adc.h>
 
 #include "config_manager.h"
@@ -36,6 +37,7 @@ constexpr uint32_t WIFI_RESET_HOLD_MS = 5000;
 constexpr uint32_t START_BOOST_DELAY_MS = 120000;
 constexpr uint32_t START_BOOST_PULSE_INTERVAL_MS = 600;
 constexpr uint8_t START_BOOST_PULSES = 10;
+constexpr uint32_t BUTTON_DEBOUNCE_MS = 50;
 
 constexpr float CURRENT_THRESHOLD_OFF = 0.2f;
 constexpr float CURRENT_THRESHOLD_HEATING = 0.8f;
@@ -104,10 +106,23 @@ unsigned long targetDirtyMillis = 0;
 
 unsigned long buttonPressStart = 0;
 bool buttonTriggeredReset = false;
+bool buttonLastRawState = false;
+bool buttonDebouncedState = false;
+unsigned long buttonLastDebounceMillis = 0;
 
 bool strokeFeedbackDetected = false;
 
 long lastEncoderPosition = 0;
+unsigned long criticalOvershootHoldUntil = 0;
+bool sensorConfigDirty = false;
+
+struct RelayPulseState {
+  bool active = false;
+  uint8_t pin = 0;
+  unsigned long endMillis = 0;
+};
+
+RelayPulseState relayPulses[5];
 
 float readCurrent();
 void updateTelemetry();
@@ -124,10 +139,49 @@ void setHeaterRequest(bool on);
 void issueStrokePulse();
 void requestStageChange(int8_t delta, bool manualOverride = false);
 const char *phaseName(HeaterPhase phase);
+void processRelayPulses();
+void syncEncoderToTarget();
+bool addressesEqual(const uint8_t *lhs, const uint8_t *rhs);
+bool applyStoredSensorAddress(const SensorAddressConfig &config, DeviceAddress &destination);
+bool updateSensorAddressConfig(SensorAddressConfig &config, const DeviceAddress &address);
 
 void IRAM_ATTR encoderISR() { encoder.tick(); }
 
 bool isValidTemp(float value) { return !isnan(value) && value > -100.0f && value < 200.0f; }
+
+bool addressesEqual(const uint8_t *lhs, const uint8_t *rhs) { return memcmp(lhs, rhs, 8) == 0; }
+
+String formatSensorAddress(const uint8_t *address) {
+  char buffer[17];
+  for (size_t i = 0; i < 8; ++i) {
+    snprintf(buffer + i * 2, 3, "%02X", address[i]);
+  }
+  return String(buffer);
+}
+
+bool applyStoredSensorAddress(const SensorAddressConfig &config, DeviceAddress &destination) {
+  if (!config.valid) {
+    return false;
+  }
+
+  DeviceAddress candidate;
+  memcpy(candidate, config.address, sizeof(candidate));
+  if (!tempSensors.validAddress(candidate) || !tempSensors.isConnected(candidate)) {
+    return false;
+  }
+
+  memcpy(destination, candidate, sizeof(candidate));
+  return true;
+}
+
+bool updateSensorAddressConfig(SensorAddressConfig &config, const DeviceAddress &address) {
+  if (!config.valid || !addressesEqual(config.address, address)) {
+    memcpy(config.address, address, sizeof(DeviceAddress));
+    config.valid = true;
+    return true;
+  }
+  return false;
+}
 
 void configurePins() {
   pinMode(RELAY_STROKE_PIN, OUTPUT);
@@ -151,10 +205,51 @@ void configurePins() {
   analogSetPinAttenuation(PIN_ACS712, ADC_11db);
 }
 
-void pulseRelay(uint8_t pin, uint16_t duration = RELAY_PULSE_MS) {
-  digitalWrite(pin, RELAY_ACTIVE_LEVEL);
-  delay(duration);
-  digitalWrite(pin, !RELAY_ACTIVE_LEVEL);
+void pulseRelay(uint8_t pin, uint16_t duration = RELAY_PULSE_MS, bool blocking = false) {
+  if (blocking) {
+    digitalWrite(pin, RELAY_ACTIVE_LEVEL);
+    delay(duration);
+    digitalWrite(pin, !RELAY_ACTIVE_LEVEL);
+    return;
+  }
+
+  processRelayPulses();
+
+  for (auto &pulse : relayPulses) {
+    if (pulse.active && pulse.pin == pin) {
+      digitalWrite(pin, !RELAY_ACTIVE_LEVEL);
+      pulse.active = false;
+    }
+  }
+
+  for (auto &pulse : relayPulses) {
+    if (!pulse.active) {
+      digitalWrite(pin, RELAY_ACTIVE_LEVEL);
+      pulse.active = true;
+      pulse.pin = pin;
+      pulse.endMillis = millis() + duration;
+      return;
+    }
+  }
+
+  Serial.println("[CTRL] Unable to schedule relay pulse - pool exhausted");
+}
+
+void processRelayPulses() {
+  unsigned long now = millis();
+  for (auto &pulse : relayPulses) {
+    if (pulse.active && static_cast<long>(now - pulse.endMillis) >= 0) {
+      digitalWrite(pulse.pin, !RELAY_ACTIVE_LEVEL);
+      pulse.active = false;
+    }
+  }
+}
+
+void syncEncoderToTarget() {
+  float target = constrain(configManager.config().targetTemp, TARGET_MIN, TARGET_MAX);
+  long newPos = lroundf(target / TARGET_STEP);
+  encoder.setPosition(newPos);
+  lastEncoderPosition = newPos;
 }
 
 float readCurrent() {
@@ -181,8 +276,10 @@ void updateTelemetry() {
   lastSensorPoll = now;
 
   tempSensors.requestTemperatures();
-  telemetry.insideTemp = insideSensorPresent ? tempSensors.getTempC(insideSensor) : NAN;
-  telemetry.exhaustTemp = exhaustSensorPresent ? tempSensors.getTempC(exhaustSensor) : NAN;
+  float insideRaw = insideSensorPresent ? tempSensors.getTempC(insideSensor) : NAN;
+  telemetry.insideTemp = isValidTemp(insideRaw) ? insideRaw : NAN;
+  float exhaustRaw = exhaustSensorPresent ? tempSensors.getTempC(exhaustSensor) : NAN;
+  telemetry.exhaustTemp = isValidTemp(exhaustRaw) ? exhaustRaw : NAN;
   telemetry.current = readCurrent();
 
   int strokeValue = digitalRead(PIN_STROKE_SENSE);
@@ -271,20 +368,31 @@ void processEncoder() {
 }
 
 void processEncoderButton() {
-  bool pressed = digitalRead(PIN_ENCODER_SW) == LOW;
   unsigned long now = millis();
+  bool rawPressed = digitalRead(PIN_ENCODER_SW) == LOW;
 
-  if (pressed) {
-    if (buttonPressStart == 0) {
-      buttonPressStart = now;
-      buttonTriggeredReset = false;
-    } else if (!buttonTriggeredReset && now - buttonPressStart >= WIFI_RESET_HOLD_MS) {
-      buttonTriggeredReset = true;
-      resetWiFiSettingsAndReboot();
+  if (rawPressed != buttonLastRawState) {
+    buttonLastRawState = rawPressed;
+    buttonLastDebounceMillis = now;
+  }
+
+  if (static_cast<long>(now - buttonLastDebounceMillis) >= static_cast<long>(BUTTON_DEBOUNCE_MS)) {
+    if (rawPressed != buttonDebouncedState) {
+      buttonDebouncedState = rawPressed;
+      if (buttonDebouncedState) {
+        buttonPressStart = now;
+        buttonTriggeredReset = false;
+      } else {
+        buttonPressStart = 0;
+        buttonTriggeredReset = false;
+      }
     }
-  } else {
-    buttonPressStart = 0;
-    buttonTriggeredReset = false;
+  }
+
+  if (buttonDebouncedState && buttonPressStart != 0 && !buttonTriggeredReset &&
+      static_cast<long>(now - buttonPressStart) >= static_cast<long>(WIFI_RESET_HOLD_MS)) {
+    buttonTriggeredReset = true;
+    resetWiFiSettingsAndReboot();
   }
 }
 
@@ -312,6 +420,7 @@ void setHeaterRequest(bool on) {
   telemetry.heaterRequest = heaterRequestOn;
 
   if (on) {
+    criticalOvershootHoldUntil = 0;
     Serial.println("[CTRL] Heater ON requested");
     pulseRelay(RELAY_ON_PIN);
     startBoostActive = true;
@@ -325,6 +434,7 @@ void setHeaterRequest(bool on) {
     Serial.println("[CTRL] Heater OFF requested");
     pulseRelay(RELAY_OFF_PIN);
     startBoostActive = false;
+    criticalOvershootHoldUntil = 0;
   }
 }
 
@@ -338,7 +448,7 @@ void requestStageChange(int8_t delta, bool manualOverride) {
     return;
   }
 
-  uint8_t desired = constrain<int>(heaterStage + delta, 1, 10);
+  uint8_t desired = static_cast<uint8_t>(constrain(heaterStage + delta, 1, 10));
   if (desired == heaterStage) {
     return;
   }
@@ -401,14 +511,17 @@ void evaluatePhase() {
   bool currentValid = !isnan(telemetry.current);
   bool exhaustValid = isValidTemp(telemetry.exhaustTemp);
 
-  if (!heaterRequestOn && (!currentValid || telemetry.current < CURRENT_THRESHOLD_OFF)) {
-    newPhase = HeaterPhase::Off;
-  } else if (currentValid && telemetry.current > CURRENT_THRESHOLD_PREHEAT && (!exhaustValid || telemetry.exhaustTemp < EXHAUST_THRESHOLD_HEATING)) {
-    newPhase = HeaterPhase::Preheat;
-  } else if (currentValid && telemetry.current > CURRENT_THRESHOLD_HEATING && exhaustValid && telemetry.exhaustTemp >= EXHAUST_THRESHOLD_HEATING) {
-    newPhase = HeaterPhase::Heating;
-  } else if (!heaterRequestOn && currentValid && telemetry.current > CURRENT_THRESHOLD_OFF && exhaustValid && telemetry.exhaustTemp < EXHAUST_THRESHOLD_COOLDOWN) {
+  if (!heaterRequestOn && exhaustValid && telemetry.exhaustTemp >= EXHAUST_THRESHOLD_COOLDOWN) {
     newPhase = HeaterPhase::Cooldown;
+  } else if (currentValid && telemetry.current > CURRENT_THRESHOLD_HEATING && exhaustValid &&
+             telemetry.exhaustTemp >= EXHAUST_THRESHOLD_HEATING) {
+    newPhase = HeaterPhase::Heating;
+  } else if (currentValid && telemetry.current > CURRENT_THRESHOLD_PREHEAT &&
+             (!exhaustValid || telemetry.exhaustTemp < EXHAUST_THRESHOLD_HEATING)) {
+    newPhase = HeaterPhase::Preheat;
+  } else if (!heaterRequestOn && (!currentValid || telemetry.current < CURRENT_THRESHOLD_OFF) &&
+             (!exhaustValid || telemetry.exhaustTemp < EXHAUST_THRESHOLD_COOLDOWN)) {
+    newPhase = HeaterPhase::Off;
   } else if (currentValid && telemetry.current < CURRENT_THRESHOLD_OFF) {
     newPhase = HeaterPhase::Off;
   }
@@ -464,12 +577,15 @@ void applyRegulation() {
 
   float target = cfg.targetTemp;
 
-  if (telemetry.insideTemp < target - cfg.regulation.deltaDown) {
-    requestStageChange(+1);
-  } else if (telemetry.insideTemp > target + cfg.regulation.deltaUpCritical) {
+  if (telemetry.insideTemp > target + cfg.regulation.deltaUpCritical) {
     requestStageChange(-1, true);
+    criticalOvershootHoldUntil = now + cfg.regulation.stabilizeDuration * 1000UL;
   } else if (telemetry.insideTemp > target + cfg.regulation.deltaUp) {
     requestStageChange(-1);
+  } else if (telemetry.insideTemp < target - cfg.regulation.deltaDown) {
+    if (static_cast<long>(now - criticalOvershootHoldUntil) >= 0) {
+      requestStageChange(+1);
+    }
   }
 }
 
@@ -569,9 +685,7 @@ void handleControlRequest(AsyncWebServerRequest *request, uint8_t *data, size_t 
     telemetry.targetTemp = value;
     targetDirty = true;
     targetDirtyMillis = millis();
-    long newPos = lroundf(value / TARGET_STEP);
-    encoder.setPosition(newPos);
-    lastEncoderPosition = newPos;
+    syncEncoderToTarget();
   }
 
   if (doc.containsKey("command")) {
@@ -614,19 +728,67 @@ void setupSensors() {
   tempSensors.begin();
   tempSensors.setResolution(11);
 
-  insideSensorPresent = tempSensors.getAddress(insideSensor, 0);
-  exhaustSensorPresent = tempSensors.getAddress(exhaustSensor, 1);
+  const SensorConfig &sensorCfg = configManager.config().sensors;
+  sensorConfigDirty = false;
+
+  insideSensorPresent = applyStoredSensorAddress(sensorCfg.inside, insideSensor);
+  if (insideSensorPresent) {
+    tempSensors.setResolution(insideSensor, 11);
+    Serial.printf("[TEMP] Innenfühler geladen: %s\n", formatSensorAddress(insideSensor).c_str());
+  }
+
+  exhaustSensorPresent = applyStoredSensorAddress(sensorCfg.exhaust, exhaustSensor);
+  if (exhaustSensorPresent) {
+    tempSensors.setResolution(exhaustSensor, 11);
+    Serial.printf("[TEMP] Abluftfühler geladen: %s\n", formatSensorAddress(exhaustSensor).c_str());
+  }
+
+  DeviceAddress candidate{};
+  int deviceCount = tempSensors.getDeviceCount();
+  for (int i = 0; i < deviceCount && (!insideSensorPresent || !exhaustSensorPresent); ++i) {
+    if (!tempSensors.getAddress(candidate, i)) {
+      continue;
+    }
+    if (!tempSensors.validAddress(candidate) || !tempSensors.isConnected(candidate)) {
+      continue;
+    }
+
+    if (!insideSensorPresent) {
+      memcpy(insideSensor, candidate, sizeof(DeviceAddress));
+      insideSensorPresent = true;
+      tempSensors.setResolution(insideSensor, 11);
+      if (updateSensorAddressConfig(configManager.config().sensors.inside, insideSensor)) {
+        sensorConfigDirty = true;
+      }
+      Serial.printf("[TEMP] Innenfühler gelernt: %s\n", formatSensorAddress(insideSensor).c_str());
+      continue;
+    }
+
+    if (!exhaustSensorPresent && !addressesEqual(candidate, insideSensor)) {
+      memcpy(exhaustSensor, candidate, sizeof(DeviceAddress));
+      exhaustSensorPresent = true;
+      tempSensors.setResolution(exhaustSensor, 11);
+      if (updateSensorAddressConfig(configManager.config().sensors.exhaust, exhaustSensor)) {
+        sensorConfigDirty = true;
+      }
+      Serial.printf("[TEMP] Abluftfühler gelernt: %s\n", formatSensorAddress(exhaustSensor).c_str());
+    }
+  }
 
   if (!insideSensorPresent) {
     Serial.println("[TEMP] Innenfühler nicht gefunden");
-  } else {
-    tempSensors.setResolution(insideSensor, 11);
   }
 
   if (!exhaustSensorPresent) {
     Serial.println("[TEMP] Abluftfühler nicht gefunden");
-  } else {
-    tempSensors.setResolution(exhaustSensor, 11);
+  }
+
+  if (sensorConfigDirty) {
+    if (configManager.save()) {
+      Serial.println("[TEMP] Sensorspeicher aktualisiert");
+    } else {
+      Serial.println("[TEMP] Sensorspeicher konnte nicht gesichert werden");
+    }
   }
 }
 
@@ -650,10 +812,7 @@ void setupEncoderHardware() {
   attachInterrupt(digitalPinToInterrupt(PIN_ENCODER_CLK), encoderISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(PIN_ENCODER_DT), encoderISR, CHANGE);
 
-  float initialTarget = configManager.config().targetTemp;
-  long initialPosition = lroundf(initialTarget / TARGET_STEP);
-  encoder.setPosition(initialPosition);
-  lastEncoderPosition = initialPosition;
+  syncEncoderToTarget();
 }
 
 } // namespace
@@ -663,7 +822,16 @@ void setup() {
   Serial.println();
   Serial.println("[BOOT] Starte Sunster Heizungsregler");
 
+  if (!LittleFS.begin(true)) {
+    Serial.println("[FS] LittleFS konnte nicht eingehängt werden");
+  }
+
   configurePins();
+
+  bool initialButtonState = digitalRead(PIN_ENCODER_SW) == LOW;
+  buttonLastRawState = initialButtonState;
+  buttonDebouncedState = initialButtonState;
+  buttonLastDebounceMillis = millis();
 
   if (!configManager.begin()) {
     Serial.println("[CFG] Konfiguration konnte nicht geladen werden");
@@ -684,6 +852,7 @@ void setup() {
 }
 
 void loop() {
+  processRelayPulses();
   ElegantOTA.loop();
 
   updateTelemetry();

@@ -26,11 +26,22 @@ struct CalibrationConfig {
   float acsSensitivity = 0.1f; // V/A
 };
 
+struct SensorAddressConfig {
+  bool valid = false;
+  uint8_t address[8] = {};
+};
+
+struct SensorConfig {
+  SensorAddressConfig inside;
+  SensorAddressConfig exhaust;
+};
+
 struct AppConfig {
   float targetTemp = 21.0f;
   RegulationConfig regulation;
   TelegramConfig telegram;
   CalibrationConfig calibration;
+  SensorConfig sensors;
 };
 
 class ConfigManager {
@@ -38,13 +49,7 @@ public:
   explicit ConfigManager(const char *configPath = "/config.json", const char *defaultPath = "/config_default.json")
       : _configPath(configPath), _defaultPath(defaultPath) {}
 
-  bool begin() {
-    if (!LittleFS.begin(true)) {
-      Serial.println("[CFG] Failed to mount LittleFS");
-      return false;
-    }
-    return load();
-  }
+  bool begin() { return load(); }
 
   AppConfig &config() { return _config; }
 
@@ -97,6 +102,15 @@ public:
       _config.calibration.acsSensitivity = calib["acs_sensitivity"].as<float>();
     }
 
+    auto sensors = doc["sensors"].as<JsonObject>();
+    if (!sensors.isNull()) {
+      loadSensorAddress(sensors["inside"], _config.sensors.inside);
+      loadSensorAddress(sensors["exhaust"], _config.sensors.exhaust);
+    } else {
+      _config.sensors.inside.valid = false;
+      _config.sensors.exhaust.valid = false;
+    }
+
     return true;
   }
 
@@ -123,6 +137,18 @@ public:
     calib["acs_zero"] = _config.calibration.acsZero;
     calib["acs_sensitivity"] = _config.calibration.acsSensitivity;
 
+    JsonObject sensors = doc.createNestedObject("sensors");
+    if (_config.sensors.inside.valid) {
+      sensors["inside"] = sensorAddressToString(_config.sensors.inside.address);
+    } else {
+      sensors["inside"] = nullptr;
+    }
+    if (_config.sensors.exhaust.valid) {
+      sensors["exhaust"] = sensorAddressToString(_config.sensors.exhaust.address);
+    } else {
+      sensors["exhaust"] = nullptr;
+    }
+
     File file = LittleFS.open(_configPath, "w");
     if (!file) {
       Serial.println("[CFG] Failed to open config for writing");
@@ -142,6 +168,72 @@ public:
   }
 
 private:
+  static int hexValue(char c) {
+    if (c >= '0' && c <= '9') {
+      return c - '0';
+    }
+    if (c >= 'a' && c <= 'f') {
+      return 10 + (c - 'a');
+    }
+    if (c >= 'A' && c <= 'F') {
+      return 10 + (c - 'A');
+    }
+    return -1;
+  }
+
+  static bool parseSensorAddress(const char *text, uint8_t *out) {
+    if (text == nullptr) {
+      return false;
+    }
+
+    uint8_t buffer[8] = {};
+    size_t index = 0;
+    int highNibble = -1;
+
+    for (const char *p = text; *p != '\0'; ++p) {
+      if (*p == ':' || *p == ' ' || *p == '-') {
+        continue;
+      }
+      int value = hexValue(*p);
+      if (value < 0) {
+        return false;
+      }
+      if (highNibble < 0) {
+        highNibble = value;
+      } else {
+        if (index >= 8) {
+          return false;
+        }
+        buffer[index++] = static_cast<uint8_t>((highNibble << 4) | value);
+        highNibble = -1;
+      }
+    }
+
+    if (highNibble >= 0 || index != 8) {
+      return false;
+    }
+
+    memcpy(out, buffer, sizeof(buffer));
+    return true;
+  }
+
+  static void loadSensorAddress(JsonVariantConst value, SensorAddressConfig &out) {
+    const char *text = value.is<const char *>() ? value.as<const char *>() : nullptr;
+    if (parseSensorAddress(text, out.address)) {
+      out.valid = true;
+    } else {
+      out.valid = false;
+    }
+  }
+
+  static String sensorAddressToString(const uint8_t *address) {
+    char buffer[17];
+    for (size_t i = 0; i < 8; ++i) {
+      snprintf(buffer + i * 2, 3, "%02X", address[i]);
+    }
+    return String(buffer);
+  }
+
   bool copyDefault() {
     if (!LittleFS.exists(_defaultPath)) {
       Serial.println("[CFG] Default config missing");
