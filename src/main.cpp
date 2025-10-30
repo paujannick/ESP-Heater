@@ -2,7 +2,7 @@
 #include <ArduinoJson.h>
 #include <AsyncTCP.h>
 #include <DallasTemperature.h>
-#include <ElegantOTA.h>
+#include <AsyncElegantOTA.h>
 #include <ESPAsyncWebServer.h>
 #include <LittleFS.h>
 #include <OneWire.h>
@@ -719,8 +719,8 @@ void setupWebServer() {
 
   server.onNotFound([](AsyncWebServerRequest *request) { request->send(404, "text/plain", "Not found"); });
 
-  ElegantOTA.begin(&server);
-  ElegantOTA.setID(OTA_HOSTNAME);
+  AsyncElegantOTA.begin(&server);
+  AsyncElegantOTA.setID(OTA_HOSTNAME);
   server.begin();
 }
 
@@ -853,7 +853,7 @@ void setup() {
 
 void loop() {
   processRelayPulses();
-  ElegantOTA.loop();
+  AsyncElegantOTA.loop();
 
   updateTelemetry();
   evaluatePhase();
