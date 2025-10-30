@@ -1,0 +1,8 @@
+{
+    "platformio-ide.autoRebuild": false,
+    "files.watcherExclude": {
+        "**/.pio/**": true,
+        "**/libdeps/**": true,
+        "**/.git/**": true
+    }
+}
