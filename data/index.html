@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sunster Heater Control</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header>
+        <h1>Sunster 8 kW Diesel Heater</h1>
+        <p class="status">Verbindung: <span id="wifi"></span></p>
+      </header>
+      <section class="grid">
+        <article>
+          <h2>Messwerte</h2>
+          <ul>
+            <li>Innen: <span id="insideTemp">--</span> °C</li>
+            <li>Abluft: <span id="exhaustTemp">--</span> °C</li>
+            <li>Strom: <span id="current">--</span> A</li>
+            <li>Phase: <span id="phase">--</span></li>
+            <li>Stufe: <span id="level">--</span></li>
+            <li>Versorgung: <span id="strokeState">--</span></li>
+          </ul>
+        </article>
+        <article>
+          <h2>Solltemperatur</h2>
+          <div class="target">
+            <span id="targetTemp">--</span> °C
+          </div>
+          <input type="range" min="10" max="28" step="0.5" id="targetSlider" />
+        </article>
+        <article>
+          <h2>Steuerung</h2>
+          <div class="buttons">
+            <button data-command="heater_on">EIN</button>
+            <button data-command="heater_off">AUS</button>
+            <button data-command="plus">+</button>
+            <button data-command="minus">−</button>
+            <button data-command="stroke">Stromstoß</button>
+          </div>
+        </article>
+        <article>
+          <h2>Konfiguration</h2>
+          <button id="reloadConfig">Aktualisieren</button>
+          <button id="wifiReset">WLAN neu einrichten</button>
+        </article>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

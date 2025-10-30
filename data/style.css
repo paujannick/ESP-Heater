@@ -1,0 +1,111 @@
+:root {
+  color-scheme: dark light;
+  font-family: "Inter", system-ui, sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+body {
+  margin: 0;
+}
+
+.container {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.status {
+  font-size: 0.9rem;
+  opacity: 0.8;
+}
+
+.grid {
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+article {
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 12px;
+  padding: 1.5rem;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.3);
+}
+
+h1,
+h2 {
+  margin-top: 0;
+}
+
+.target {
+  font-size: 3rem;
+  font-weight: 700;
+  text-align: center;
+  margin-bottom: 1rem;
+}
+
+input[type="range"] {
+  width: 100%;
+}
+
+.buttons {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.buttons button {
+  padding: 0.75rem;
+  font-size: 1.2rem;
+  border-radius: 999px;
+  border: none;
+  color: #0f172a;
+  background: #38bdf8;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.buttons button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 20px rgba(56, 189, 248, 0.4);
+}
+
+.buttons button:last-child {
+  grid-column: span 2;
+}
+
+button#reloadConfig,
+button#wifiReset {
+  width: 100%;
+  padding: 0.65rem 1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  margin-bottom: 0.5rem;
+}
+
+button#wifiReset {
+  border-color: rgba(248, 113, 113, 0.6);
+  color: #fca5a5;
+}
+
+@media (max-width: 600px) {
+  .container {
+    padding: 1rem;
+  }
+
+  .target {
+    font-size: 2.2rem;
+  }
+}
