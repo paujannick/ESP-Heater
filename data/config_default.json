@@ -1,0 +1,22 @@
+{
+  "target_temp": 21.0,
+  "regulation": {
+    "delta_down": 1.5,
+    "delta_up": 0.8,
+    "delta_up_critical": 2.0,
+    "min_step_interval": 180,
+    "stabilize_duration": 480,
+    "max_steps_per_quarter": 2,
+    "exhaust_warn": 90,
+    "exhaust_off": 120
+  },
+  "telegram": {
+    "enabled": false,
+    "token": "",
+    "chat_id": ""
+  },
+  "calibration": {
+    "acs_zero": 2.5,
+    "acs_sensitivity": 0.1
+  }
+}
