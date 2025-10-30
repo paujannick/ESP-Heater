@@ -21,7 +21,12 @@ bool autoConfigureWiFi(const char *hostname, const char *apName, const char *apP
   wifiManager.setConnectRetries(5);
   wifiManager.setMinimumSignalQuality(15);
 
-  if (!wifiManager.autoConnect(apName, apPassword)) {
+  bool connected = wifiManager.autoConnect(apName, apPassword);
+
+  wifiManager.stopWebPortal();
+  wifiManager.stopConfigPortal();
+
+  if (!connected) {
     Serial.println("[WiFi] Failed to connect or timeout reached");
     return false;
   }
