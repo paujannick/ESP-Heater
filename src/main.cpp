@@ -114,6 +114,7 @@ bool strokeFeedbackDetected = false;
 long lastEncoderPosition = 0;
 unsigned long criticalOvershootHoldUntil = 0;
 bool sensorConfigDirty = false;
+bool webServerRunning = false;
 
 struct RelayPulseState {
   bool active = false;
@@ -838,17 +839,26 @@ void setup() {
   setupDisplay();
   setupEncoderHardware();
 
-  if (!autoConfigureWiFi(DEVICE_HOSTNAME, WIFI_AP_NAME, WIFI_AP_PASSWORD)) {
+  bool wifiConnected = autoConfigureWiFi(DEVICE_HOSTNAME, WIFI_AP_NAME, WIFI_AP_PASSWORD);
+  if (!wifiConnected) {
     Serial.println("[WiFi] Starte Konfigurationsportal");
   }
   WiFi.setAutoReconnect(true);
 
-  setupWebServer();
+  if (wifiConnected) {
+    setupWebServer();
+    webServerRunning = true;
+  }
 
   Serial.println("[BOOT] Setup abgeschlossen");
 }
 
 void loop() {
+  if (!webServerRunning && WiFi.status() == WL_CONNECTED) {
+    setupWebServer();
+    webServerRunning = true;
+  }
+
   processRelayPulses();
 
   updateTelemetry();

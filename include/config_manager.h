@@ -1,8 +1,9 @@
 #pragma once
 
 #include <Arduino.h>
-#include <LittleFS.h>
 #include <ArduinoJson.h>
+#include <LittleFS.h>
+#include <cstring>
 
 struct RegulationConfig {
   float deltaDown = 1.5f;
@@ -235,23 +236,97 @@ private:
   }
 
   bool copyDefault() {
+    if (LittleFS.exists(_defaultPath)) {
+      return copyFile(_defaultPath, _configPath);
+    }
+
+    Serial.println("[CFG] Default config missing, writing embedded defaults");
+
+    static constexpr const char FALLBACK_CONFIG[] = R"({
+  "target_temp": 21.0,
+  "regulation": {
+    "delta_down": 1.5,
+    "delta_up": 0.8,
+    "delta_up_critical": 2.0,
+    "min_step_interval": 180,
+    "stabilize_duration": 480,
+    "max_steps_per_quarter": 2,
+    "exhaust_warn": 90,
+    "exhaust_off": 120
+  },
+  "telegram": {
+    "enabled": false,
+    "token": "",
+    "chat_id": ""
+  },
+  "calibration": {
+    "acs_zero": 2.5,
+    "acs_sensitivity": 0.1
+  },
+  "sensors": {
+    "inside": null,
+    "exhaust": null
+  }
+})";
+
+    if (!writeTextFile(_configPath, FALLBACK_CONFIG)) {
+      return false;
+    }
+
     if (!LittleFS.exists(_defaultPath)) {
-      Serial.println("[CFG] Default config missing");
+      if (!writeTextFile(_defaultPath, FALLBACK_CONFIG)) {
+        Serial.println("[CFG] Failed to persist embedded defaults as config_default.json");
+      }
+    }
+
+    return true;
+  }
+
+  static bool copyFile(const char *srcPath, const char *dstPath) {
+    File src = LittleFS.open(srcPath, "r");
+    if (!src) {
+      Serial.printf("[CFG] Failed to open %s for reading\n", srcPath);
       return false;
     }
 
-    File src = LittleFS.open(_defaultPath, "r");
-    File dst = LittleFS.open(_configPath, "w");
-    if (!src || !dst) {
-      Serial.println("[CFG] Failed to copy default config");
+    File dst = LittleFS.open(dstPath, "w");
+    if (!dst) {
+      Serial.printf("[CFG] Failed to open %s for writing\n", dstPath);
+      src.close();
       return false;
     }
 
-    while (src.available()) {
-      dst.write(src.read());
+    uint8_t buffer[128];
+    while (size_t read = src.read(buffer, sizeof(buffer))) {
+      if (dst.write(buffer, read) != read) {
+        Serial.println("[CFG] Failed to copy default config");
+        src.close();
+        dst.close();
+        return false;
+      }
     }
+
     src.close();
     dst.close();
+    return true;
+  }
+
+  static bool writeTextFile(const char *path, const char *contents) {
+    File file = LittleFS.open(path, "w");
+    if (!file) {
+      Serial.printf("[CFG] Failed to open %s for writing\n", path);
+      return false;
+    }
+
+    size_t length = std::strlen(contents);
+    size_t written = file.write(reinterpret_cast<const uint8_t *>(contents), length);
+    file.close();
+
+    if (written != length) {
+      Serial.printf("[CFG] Failed to write full contents to %s\n", path);
+      return false;
+    }
+
     return true;
   }
 
