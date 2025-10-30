@@ -33,7 +33,6 @@ bool autoConfigureWiFi(const char *hostname, const char *apName, const char *apP
     Serial.println("[mDNS] Failed to start responder");
   } else {
     MDNS.addService("http", "tcp", 80);
-    MDNS.addService("ota", "tcp", 3232);
   }
 
   return true;

@@ -2,7 +2,6 @@
 #include <ArduinoJson.h>
 #include <AsyncTCP.h>
 #include <DallasTemperature.h>
-#include <AsyncElegantOTA.h>
 #include <ESPAsyncWebServer.h>
 #include <LittleFS.h>
 #include <OneWire.h>
@@ -21,7 +20,7 @@
 
 namespace {
 
-constexpr char OTA_HOSTNAME[] = "sunster-heater";
+constexpr char DEVICE_HOSTNAME[] = "sunster-heater";
 constexpr char WIFI_AP_NAME[] = "SunsterSetup";
 constexpr char WIFI_AP_PASSWORD[] = "sunster123";
 
@@ -649,7 +648,7 @@ void sendStatus(AsyncWebServerRequest *request) {
   doc["stroke_feedback"] = telemetry.strokeFeedbackPresent;
   doc["boost_active"] = telemetry.boostActive;
   doc["uptime"] = millis() / 1000;
-  doc["hostname"] = OTA_HOSTNAME;
+  doc["hostname"] = DEVICE_HOSTNAME;
 
   if (telemetry.wifiConnected) {
     doc["wifi_rssi"] = telemetry.wifiRssi;
@@ -719,8 +718,6 @@ void setupWebServer() {
 
   server.onNotFound([](AsyncWebServerRequest *request) { request->send(404, "text/plain", "Not found"); });
 
-  AsyncElegantOTA.begin(&server);
-  AsyncElegantOTA.setID(OTA_HOSTNAME);
   server.begin();
 }
 
@@ -841,7 +838,7 @@ void setup() {
   setupDisplay();
   setupEncoderHardware();
 
-  if (!autoConfigureWiFi(OTA_HOSTNAME, WIFI_AP_NAME, WIFI_AP_PASSWORD)) {
+  if (!autoConfigureWiFi(DEVICE_HOSTNAME, WIFI_AP_NAME, WIFI_AP_PASSWORD)) {
     Serial.println("[WiFi] Starte Konfigurationsportal");
   }
   WiFi.setAutoReconnect(true);
@@ -853,7 +850,6 @@ void setup() {
 
 void loop() {
   processRelayPulses();
-  AsyncElegantOTA.loop();
 
   updateTelemetry();
   evaluatePhase();
