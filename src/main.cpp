@@ -37,7 +37,7 @@ constexpr uint32_t WIFI_RESET_HOLD_MS = 5000;
 constexpr uint32_t ENCODER_LONG_PRESS_MS = 1000;
 constexpr uint32_t ENCODER_EDIT_TIMEOUT_MS = 30000;
 constexpr uint32_t START_BOOST_DELAY_MS = 120000;
-constexpr uint32_t START_BOOST_PULSE_INTERVAL_MS = 600;
+constexpr uint32_t START_BOOST_PULSE_INTERVAL_MS = 1200;
 constexpr uint8_t START_BOOST_PULSES = 10;
 constexpr uint32_t HEATER_ON_COMMAND_DELAY_MS = 5000;
 constexpr uint32_t BUTTON_DEBOUNCE_MS = 50;
@@ -929,10 +929,11 @@ void handleStartBoost() {
     return;
   }
 
-  if (!pulseRelay(RELAY_PLUS_PIN)) {
+  if (!pulseRelay(RELAY_PLUS_PIN, RELAY_PULSE_MS, true)) {
     telemetry.boostActive = true;
     return;
   }
+  now = millis();
   lastBoostPulseMillis = now;
   ++boostPulsesSent;
   heaterStage = min<uint8_t>(10, static_cast<uint8_t>(heaterStage + 1));
@@ -943,6 +944,9 @@ void handleStartBoost() {
 void sendStatus(AsyncWebServerRequest *request) {
   AsyncResponseStream *response = request->beginResponseStream("application/json");
   StaticJsonDocument<512> doc;
+
+  auto lines = composeVirtualDisplayLines();
+  mirroredDisplayLines = lines;
 
   if (isValidTemp(telemetry.insideTemp)) {
     doc["inside_temp"] = telemetry.insideTemp;
@@ -981,7 +985,7 @@ void sendStatus(AsyncWebServerRequest *request) {
   }
 
   JsonArray displayLines = doc.createNestedArray("display");
-  for (const auto &line : mirroredDisplayLines) {
+  for (const auto &line : lines) {
     displayLines.add(line);
   }
 
