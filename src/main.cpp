@@ -10,6 +10,7 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <driver/adc.h>
@@ -40,6 +41,7 @@ constexpr uint32_t START_BOOST_PULSE_INTERVAL_MS = 600;
 constexpr uint8_t START_BOOST_PULSES = 10;
 constexpr uint32_t HEATER_ON_COMMAND_DELAY_MS = 5000;
 constexpr uint32_t BUTTON_DEBOUNCE_MS = 50;
+constexpr unsigned long RELAY_RETRIGGER_GUARD_MS = 400;
 
 constexpr float CURRENT_THRESHOLD_OFF = 0.2f;
 constexpr float CURRENT_THRESHOLD_HEATING = 0.8f;
@@ -138,6 +140,8 @@ struct RelayPulseState {
 };
 
 RelayPulseState relayPulses[5];
+std::array<unsigned long, 5> relayLastPulseMillis{};
+std::array<String, 7> mirroredDisplayLines{};
 
 float readCurrent();
 void updateTelemetry();
@@ -154,7 +158,7 @@ void sendConfig(AsyncWebServerRequest *request);
 void handleConfigUpdate(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total);
 void setupWebServer();
 void setHeaterRequest(bool on);
-void issueStrokePulse();
+bool issueStrokePulse();
 void requestStageChange(int8_t delta, bool manualOverride = false);
 const char *phaseName(HeaterPhase phase);
 void processRelayPulses();
@@ -169,6 +173,8 @@ bool parseSensorAddressString(const char *text, DeviceAddress &out);
 bool updateTargetTemperature(float value, bool scheduleSave);
 bool isNumeric(JsonVariantConst value);
 bool isBoolean(JsonVariantConst value);
+std::array<String, 7> composeVirtualDisplayLines();
+int relayIndexForPin(uint8_t pin);
 
 void IRAM_ATTR encoderISR() { encoder.tick(); }
 
@@ -284,6 +290,23 @@ bool updateSensorAddressConfig(SensorAddressConfig &config, const DeviceAddress 
   return false;
 }
 
+int relayIndexForPin(uint8_t pin) {
+  switch (pin) {
+    case RELAY_STROKE_PIN:
+      return 0;
+    case RELAY_ON_PIN:
+      return 1;
+    case RELAY_OFF_PIN:
+      return 2;
+    case RELAY_PLUS_PIN:
+      return 3;
+    case RELAY_MINUS_PIN:
+      return 4;
+    default:
+      return -1;
+  }
+}
+
 void configurePins() {
   pinMode(RELAY_STROKE_PIN, OUTPUT);
   pinMode(RELAY_ON_PIN, OUTPUT);
@@ -306,12 +329,27 @@ void configurePins() {
   analogSetPinAttenuation(PIN_ACS712, ADC_11db);
 }
 
-void pulseRelay(uint8_t pin, uint16_t duration = RELAY_PULSE_MS, bool blocking = false) {
+bool pulseRelay(uint8_t pin, uint16_t duration = RELAY_PULSE_MS, bool blocking = false) {
+  unsigned long now = millis();
+  int index = relayIndexForPin(pin);
+
+  if (index >= 0) {
+    unsigned long last = relayLastPulseMillis[static_cast<size_t>(index)];
+    if (last != 0 && static_cast<long>(now - last) < static_cast<long>(RELAY_RETRIGGER_GUARD_MS)) {
+      Serial.printf("[CTRL] Relay pulse on pin %u suppressed (%lums since last)\n", pin,
+                    static_cast<unsigned long>(now - last));
+      return false;
+    }
+  }
+
   if (blocking) {
     digitalWrite(pin, RELAY_ACTIVE_LEVEL);
     delay(duration);
     digitalWrite(pin, !RELAY_ACTIVE_LEVEL);
-    return;
+    if (index >= 0) {
+      relayLastPulseMillis[static_cast<size_t>(index)] = now;
+    }
+    return true;
   }
 
   processRelayPulses();
@@ -328,12 +366,16 @@ void pulseRelay(uint8_t pin, uint16_t duration = RELAY_PULSE_MS, bool blocking =
       digitalWrite(pin, RELAY_ACTIVE_LEVEL);
       pulse.active = true;
       pulse.pin = pin;
-      pulse.endMillis = millis() + duration;
-      return;
+      pulse.endMillis = now + duration;
+      if (index >= 0) {
+        relayLastPulseMillis[static_cast<size_t>(index)] = now;
+      }
+      return true;
     }
   }
 
   Serial.println("[CTRL] Unable to schedule relay pulse - pool exhausted");
+  return false;
 }
 
 void processRelayPulses() {
@@ -417,50 +459,81 @@ void updateTelemetry() {
   }
 }
 
-void updateDisplay() {
-  if (!displayPresent) {
-    return;
+std::array<String, 7> composeVirtualDisplayLines() {
+  std::array<String, 7> lines{};
+
+  lines[0] = F("Innen: ");
+  if (isValidTemp(telemetry.insideTemp)) {
+    lines[0] += String(telemetry.insideTemp, 1);
+    lines[0] += F("C");
+  } else {
+    lines[0] += F("----");
   }
 
+  lines[1] = F("Abluft: ");
+  if (isValidTemp(telemetry.exhaustTemp)) {
+    lines[1] += String(telemetry.exhaustTemp, 1);
+    lines[1] += F("C");
+  } else {
+    lines[1] += F("----");
+  }
+
+  lines[2] = F("Strom: ");
+  if (!isnan(telemetry.current)) {
+    lines[2] += String(telemetry.current, 1);
+    lines[2] += F("A");
+  } else {
+    lines[2] += F("----");
+  }
+
+  lines[3] = F("Phase: ");
+  lines[3] += phaseName(currentPhase);
+
+  lines[4] = F("Stufe: ");
+  lines[4] += String(telemetry.stage);
+  lines[4] += F(" Soll:");
+  if (!isnan(telemetry.targetTemp)) {
+    lines[4] += String(telemetry.targetTemp, 1);
+  } else {
+    lines[4] += F("--");
+  }
+
+  if (telemetry.wifiConnected) {
+    lines[5] = F("WiFi: ");
+    lines[5] += String(telemetry.wifiRssi);
+    lines[5] += F(" dBm");
+  } else {
+    lines[5] = F("WiFi: offline");
+  }
+
+  lines[6] = F("Vers: ");
+  lines[6] += telemetry.heaterSupplyOn ? F("AN") : F("AUS");
+
+  return lines;
+}
+
+void updateDisplay() {
   unsigned long now = millis();
   if (now - lastDisplayUpdate < DISPLAY_INTERVAL_MS) {
     return;
   }
   lastDisplayUpdate = now;
 
+  auto lines = composeVirtualDisplayLines();
+  mirroredDisplayLines = lines;
+
+  if (!displayPresent) {
+    return;
+  }
+
   display.clearDisplay();
   display.setCursor(0, 0);
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
 
-  if (isValidTemp(telemetry.insideTemp)) {
-    display.printf("Innen: %4.1fC\n", telemetry.insideTemp);
-  } else {
-    display.println("Innen: ----");
+  for (const auto &line : lines) {
+    display.println(line);
   }
-
-  if (isValidTemp(telemetry.exhaustTemp)) {
-    display.printf("Abluft: %4.1fC\n", telemetry.exhaustTemp);
-  } else {
-    display.println("Abluft: ----");
-  }
-
-  if (!isnan(telemetry.current)) {
-    display.printf("Strom: %4.1fA\n", telemetry.current);
-  } else {
-    display.println("Strom: ----");
-  }
-
-  display.printf("Phase: %s\n", phaseName(currentPhase));
-  display.printf("Stufe: %u Soll:%4.1f\n", telemetry.stage, telemetry.targetTemp);
-
-  if (telemetry.wifiConnected) {
-    display.printf("WiFi: %d dBm\n", telemetry.wifiRssi);
-  } else {
-    display.println("WiFi: offline");
-  }
-
-  display.printf("Vers: %s\n", telemetry.heaterSupplyOn ? "AN" : "AUS");
   display.display();
 }
 
@@ -605,8 +678,9 @@ void setHeaterRequest(bool on) {
     Serial.println("[CTRL] Heater ON requested");
     if (!mainRelayAssumedOn) {
       Serial.println("[CTRL] Hauptrelais EIN (automatisch)");
-      issueStrokePulse();
-      mainRelayAssumedOn = true;
+      if (issueStrokePulse()) {
+        mainRelayAssumedOn = true;
+      }
     }
     pendingMainRelayOff = false;
     heaterOnPulsePending = true;
@@ -615,7 +689,9 @@ void setHeaterRequest(bool on) {
   } else {
     Serial.println("[CTRL] Heater OFF requested");
     heaterOnPulsePending = false;
-    pulseRelay(RELAY_OFF_PIN);
+    if (!pulseRelay(RELAY_OFF_PIN)) {
+      Serial.println("[CTRL] AUS-Befehl konnte nicht gesendet werden (Relais gesperrt)");
+    }
     startBoostActive = false;
     criticalOvershootHoldUntil = 0;
     if (mainRelayAssumedOn) {
@@ -624,13 +700,27 @@ void setHeaterRequest(bool on) {
   }
 }
 
-void issueStrokePulse() {
-  Serial.println("[CTRL] Stromstoß ausgelöst");
-  pulseRelay(RELAY_STROKE_PIN);
+bool issueStrokePulse() {
+  bool triggered = pulseRelay(RELAY_STROKE_PIN);
+  if (triggered) {
+    Serial.println("[CTRL] Stromstoß ausgelöst");
+  } else {
+    Serial.println("[CTRL] Stromstoß blockiert (Sicherheitssperre aktiv)");
+  }
+  return triggered;
 }
 
 void requestStageChange(int8_t delta, bool manualOverride) {
   if (delta == 0) {
+    return;
+  }
+
+  if (!heaterRequestOn && !startBoostActive && !manualOverride) {
+    return;
+  }
+
+  if (manualOverride && !heaterSupplyState && !heaterRequestOn && !startBoostActive) {
+    Serial.println("[CTRL] Stufenänderung ignoriert - Versorgung aus");
     return;
   }
 
@@ -657,10 +747,10 @@ void requestStageChange(int8_t delta, bool manualOverride) {
     }
   }
 
-  if (desired > heaterStage) {
-    pulseRelay(RELAY_PLUS_PIN);
-  } else {
-    pulseRelay(RELAY_MINUS_PIN);
+  bool increased = desired > heaterStage;
+  if (!pulseRelay(increased ? RELAY_PLUS_PIN : RELAY_MINUS_PIN)) {
+    Serial.println("[CTRL] Stufenänderung blockiert - Relais gesperrt");
+    return;
   }
 
   heaterStage = desired;
@@ -731,9 +821,10 @@ void evaluatePhase() {
       (isnan(telemetry.current) || telemetry.current < CURRENT_THRESHOLD_OFF) &&
       (!isValidTemp(telemetry.exhaustTemp) || telemetry.exhaustTemp < EXHAUST_THRESHOLD_COOLDOWN)) {
     Serial.println("[CTRL] Hauptrelais AUS nach sicherem Stopp");
-    issueStrokePulse();
-    pendingMainRelayOff = false;
-    mainRelayAssumedOn = false;
+    if (issueStrokePulse()) {
+      pendingMainRelayOff = false;
+      mainRelayAssumedOn = false;
+    }
   }
 }
 
@@ -798,9 +889,14 @@ void processPendingHeaterOnCommand() {
     return;
   }
 
-  heaterOnPulsePending = false;
   Serial.println("[CTRL] Verzögerter EIN-Befehl ausgelöst");
-  pulseRelay(RELAY_ON_PIN);
+  if (!pulseRelay(RELAY_ON_PIN)) {
+    Serial.println("[CTRL] EIN-Befehl blockiert - versuche erneut");
+    heaterOnPulseDueMillis = now + RELAY_RETRIGGER_GUARD_MS;
+    return;
+  }
+
+  heaterOnPulsePending = false;
   startBoostActive = true;
   startBoostStartMillis = now;
   lastBoostPulseMillis = 0;
@@ -833,7 +929,10 @@ void handleStartBoost() {
     return;
   }
 
-  pulseRelay(RELAY_PLUS_PIN);
+  if (!pulseRelay(RELAY_PLUS_PIN)) {
+    telemetry.boostActive = true;
+    return;
+  }
   lastBoostPulseMillis = now;
   ++boostPulsesSent;
   heaterStage = min<uint8_t>(10, static_cast<uint8_t>(heaterStage + 1));
@@ -879,6 +978,11 @@ void sendStatus(AsyncWebServerRequest *request) {
     doc["ip"] = WiFi.localIP().toString();
   } else {
     doc["wifi_rssi"] = nullptr;
+  }
+
+  JsonArray displayLines = doc.createNestedArray("display");
+  for (const auto &line : mirroredDisplayLines) {
+    displayLines.add(line);
   }
 
   serializeJson(doc, *response);
@@ -1422,6 +1526,7 @@ void setup() {
 
   setupSensors();
   setupDisplay();
+  mirroredDisplayLines = composeVirtualDisplayLines();
   setupEncoderHardware();
 
   bool wifiConnected = autoConfigureWiFi(DEVICE_HOSTNAME, WIFI_AP_NAME, WIFI_AP_PASSWORD);

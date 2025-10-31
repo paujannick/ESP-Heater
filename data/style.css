@@ -142,6 +142,34 @@ h2 {
   font-weight: 600;
 }
 
+.virtual-display {
+  margin-top: 1.2rem;
+  display: grid;
+  gap: 0.35rem;
+  padding: 1rem 1.1rem;
+  border-radius: 14px;
+  background: radial-gradient(circle at top left, rgba(15, 118, 110, 0.65), rgba(17, 24, 39, 0.85));
+  border: 1px solid rgba(94, 234, 212, 0.25);
+  box-shadow: inset 0 0 28px rgba(6, 78, 59, 0.45);
+  font-family: 'JetBrains Mono', 'Roboto Mono', monospace;
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+  min-height: 9rem;
+}
+
+.virtual-display span {
+  display: block;
+  white-space: pre;
+}
+
+.virtual-display span.empty {
+  opacity: 0.55;
+}
+
+.virtual-display.inactive {
+  opacity: 0.7;
+}
+
 .target {
   font-size: clamp(2.4rem, 4vw, 3.2rem);
   font-weight: 700;
@@ -327,6 +355,28 @@ button.danger:hover {
   border-color: rgba(34, 211, 238, 0.65);
   box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.18);
   background: rgba(15, 23, 42, 0.85);
+}
+
+.command-list {
+  margin: 0;
+  padding-left: 1.2rem;
+  display: grid;
+  gap: 0.45rem;
+  font-size: 0.95rem;
+  color: rgba(226, 232, 240, 0.8);
+}
+
+.command-list li {
+  line-height: 1.5;
+}
+
+.command-list code {
+  font-family: 'JetBrains Mono', 'Roboto Mono', monospace;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 6px;
+  padding: 0.15rem 0.4rem;
+  color: #bae6fd;
 }
 
 .checkbox-field {
