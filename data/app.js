@@ -23,6 +23,9 @@ const statusEls = {
   reload: document.getElementById('reloadConfig'),
 };
 
+const displayContainer = document.getElementById('displayMirror');
+const displayLines = displayContainer ? Array.from(displayContainer.querySelectorAll('[data-line]')) : [];
+
 const sliderState = {
   isUserInteracting: false,
   debounceId: null,
@@ -136,6 +139,21 @@ function updateStatusUI(data) {
       text += text === '--' ? ' Feedback fehlt' : ' (ohne Feedback)';
     }
     statusEls.stroke.textContent = text;
+  }
+
+  if (displayContainer && displayLines.length > 0) {
+    const lines = Array.isArray(data.display) ? data.display : [];
+    let hasContent = false;
+    displayLines.forEach((el, index) => {
+      const value = typeof lines[index] === 'string' ? lines[index] : '';
+      const trimmed = value.trim();
+      if (trimmed.length > 0) {
+        hasContent = true;
+      }
+      el.textContent = trimmed.length > 0 ? value : ' ';
+      el.classList.toggle('empty', trimmed.length === 0);
+    });
+    displayContainer.classList.toggle('inactive', !hasContent);
   }
 }
 
