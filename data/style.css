@@ -27,6 +27,14 @@ body {
   align-items: center;
 }
 
+.header-actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .status-line {
   font-size: 0.95rem;
   display: flex;
@@ -89,7 +97,8 @@ body {
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
 }
 
-article {
+article,
+.form-card {
   background: rgba(15, 23, 42, 0.75);
   border: 1px solid rgba(148, 163, 184, 0.25);
   border-radius: 18px;
@@ -179,6 +188,43 @@ input[type="range"] {
   gap: 0.9rem;
 }
 
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.65rem 1.1rem;
+  border-radius: 14px;
+  border: 1px solid transparent;
+  background: linear-gradient(135deg, #38bdf8, #22d3ee);
+  color: #0f172a;
+  text-decoration: none;
+  font-weight: 600;
+  transition: transform 0.15s ease, box-shadow 0.2s ease, filter 0.2s ease;
+}
+
+.button-link:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 22px rgba(34, 211, 238, 0.45);
+}
+
+.button-link:focus-visible {
+  outline: 2px solid rgba(34, 211, 238, 0.7);
+  outline-offset: 3px;
+}
+
+.button-link.ghost-link {
+  background: transparent;
+  border-color: rgba(148, 163, 184, 0.35);
+  color: #e2e8f0;
+}
+
+.button-link.ghost-link:hover {
+  border-color: rgba(148, 163, 184, 0.6);
+  box-shadow: none;
+  transform: translateY(-1px);
+}
+
 .buttons button {
   padding: 0.85rem;
   font-size: 1.05rem;
@@ -232,6 +278,98 @@ button.danger {
 
 button.danger:hover {
   border-color: rgba(248, 113, 113, 0.75);
+}
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.form-card {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.form-card h2 {
+  margin-bottom: 0.35rem;
+}
+
+.form-grid {
+  display: grid;
+  gap: 1.1rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.95rem;
+  color: rgba(226, 232, 240, 0.78);
+}
+
+.form-grid input[type='number'],
+.form-grid input[type='text'] {
+  padding: 0.65rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.65);
+  color: inherit;
+  font-size: 1rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.form-grid input[type='number']:focus,
+.form-grid input[type='text']:focus {
+  outline: none;
+  border-color: rgba(34, 211, 238, 0.65);
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.18);
+  background: rgba(15, 23, 42, 0.85);
+}
+
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.55);
+  font-size: 0.95rem;
+}
+
+.checkbox-field span {
+  flex: 1;
+}
+
+.checkbox-field input[type='checkbox'] {
+  width: 20px;
+  height: 20px;
+  accent-color: #22d3ee;
+}
+
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: flex-end;
+}
+
+.form-actions button {
+  flex: 0 0 auto;
+  min-width: 190px;
+}
+
+.form-actions .ghost {
+  margin-bottom: 0;
+}
+
+.alert.success {
+  background: rgba(34, 197, 94, 0.15);
+  border-color: rgba(34, 197, 94, 0.45);
+  color: #bbf7d0;
 }
 
 .loading {
