@@ -8,6 +8,11 @@ const statusEls = {
   wifi: document.getElementById('wifi'),
   slider: document.getElementById('targetSlider'),
   stroke: document.getElementById('strokeState'),
+  mode: document.getElementById('mode'),
+  modeAuto: document.getElementById('modeAuto'),
+  modeManual: document.getElementById('modeManual'),
+  stageUp: document.getElementById('stageUp'),
+  stageDown: document.getElementById('stageDown'),
 };
 
 async function fetchJSON(url, options = {}) {
@@ -32,8 +37,24 @@ function updateStatusUI(data) {
   statusEls.phase.textContent = data.phase || '--';
   statusEls.level.textContent = typeof data.level === 'number' ? data.level : '--';
   statusEls.target.textContent = formatNumber(data.target_temp);
-  statusEls.slider.value = typeof data.target_temp === 'number' ? data.target_temp : 21;
+  const manualMode = data.mode === 'manual';
+  if (statusEls.slider) {
+    statusEls.slider.value = typeof data.target_temp === 'number' ? data.target_temp : 21;
+    statusEls.slider.disabled = manualMode;
+  }
   statusEls.wifi.textContent = typeof data.wifi_rssi === 'number' ? `${data.wifi_rssi} dBm` : '--';
+  if (statusEls.mode) {
+    statusEls.mode.textContent = manualMode ? 'Manuell' : 'Automatik';
+  }
+  if (statusEls.modeAuto && statusEls.modeManual) {
+    statusEls.modeAuto.classList.toggle('active', !manualMode);
+    statusEls.modeManual.classList.toggle('active', manualMode);
+  }
+  [statusEls.stageUp, statusEls.stageDown].forEach((btn) => {
+    if (btn) {
+      btn.disabled = !manualMode;
+    }
+  });
   if (statusEls.stroke) {
     let text = '--';
     if (typeof data.heater_on === 'boolean') {
@@ -78,6 +99,10 @@ function setupControls() {
         sendControl({ heater_on: true });
       } else if (command === 'heater_off') {
         sendControl({ heater_on: false });
+      } else if (command === 'mode_auto') {
+        sendControl({ mode: 'auto' });
+      } else if (command === 'mode_manual') {
+        sendControl({ mode: 'manual' });
       } else {
         sendControl({ command });
       }
