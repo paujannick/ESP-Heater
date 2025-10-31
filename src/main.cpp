@@ -33,6 +33,8 @@ constexpr uint32_t DISPLAY_INTERVAL_MS = 500;
 constexpr uint32_t REGULATION_INTERVAL_MS = 1000;
 constexpr uint32_t TARGET_SAVE_DELAY_MS = 3000;
 constexpr uint32_t WIFI_RESET_HOLD_MS = 5000;
+constexpr uint32_t ENCODER_LONG_PRESS_MS = 1000;
+constexpr uint32_t ENCODER_EDIT_TIMEOUT_MS = 30000;
 constexpr uint32_t START_BOOST_DELAY_MS = 120000;
 constexpr uint32_t START_BOOST_PULSE_INTERVAL_MS = 600;
 constexpr uint8_t START_BOOST_PULSES = 10;
@@ -113,9 +115,14 @@ bool buttonLastRawState = false;
 bool buttonDebouncedState = false;
 unsigned long buttonLastDebounceMillis = 0;
 
-bool strokeFeedbackDetected = false;
+bool strokeFeedbackAvailable = false;
+bool strokeFeedbackSeenActive = false;
+bool strokeFeedbackSeenInactive = false;
 
 long lastEncoderPosition = 0;
+bool encoderEditingActive = false;
+float encoderDraftTarget = TARGET_MIN;
+unsigned long encoderLastActivity = 0;
 unsigned long criticalOvershootHoldUntil = 0;
 bool sensorConfigDirty = false;
 bool webServerRunning = false;
@@ -145,6 +152,9 @@ void requestStageChange(int8_t delta, bool manualOverride = false);
 const char *phaseName(HeaterPhase phase);
 void processRelayPulses();
 void syncEncoderToTarget();
+void commitEncoderTarget();
+void cancelEncoderEditing();
+void updateEncoderEditingState();
 bool addressesEqual(const uint8_t *lhs, const uint8_t *rhs);
 bool applyStoredSensorAddress(const SensorAddressConfig &config, DeviceAddress &destination);
 bool updateSensorAddressConfig(SensorAddressConfig &config, const DeviceAddress &address);
@@ -251,6 +261,7 @@ void processRelayPulses() {
 
 void syncEncoderToTarget() {
   float target = constrain(configManager.config().targetTemp, TARGET_MIN, TARGET_MAX);
+  encoderDraftTarget = target;
   long newPos = lroundf(target / TARGET_STEP);
   encoder.setPosition(newPos);
   lastEncoderPosition = newPos;
@@ -286,12 +297,19 @@ void updateTelemetry() {
   telemetry.exhaustTemp = isValidTemp(exhaustRaw) ? exhaustRaw : NAN;
   telemetry.current = readCurrent();
 
-  int strokeValue = digitalRead(PIN_STROKE_SENSE);
-  if (strokeValue == STROKE_SENSE_ACTIVE_LEVEL) {
-    strokeFeedbackDetected = true;
-    heaterSupplyState = true;
-  } else if (strokeFeedbackDetected) {
-    heaterSupplyState = false;
+  bool strokeActive = digitalRead(PIN_STROKE_SENSE) == STROKE_SENSE_ACTIVE_LEVEL;
+  if (strokeActive) {
+    strokeFeedbackSeenActive = true;
+  } else {
+    strokeFeedbackSeenInactive = true;
+  }
+
+  if (!strokeFeedbackAvailable && strokeFeedbackSeenActive && strokeFeedbackSeenInactive) {
+    strokeFeedbackAvailable = true;
+  }
+
+  if (strokeFeedbackAvailable) {
+    heaterSupplyState = strokeActive;
   } else {
     heaterSupplyState = heaterRequestOn;
   }
@@ -299,15 +317,15 @@ void updateTelemetry() {
   telemetry.heaterSupplyOn = heaterSupplyState;
   telemetry.heaterRequest = heaterRequestOn;
   telemetry.manualMode = manualControlMode;
-  telemetry.strokeFeedbackPresent = strokeFeedbackDetected;
+  telemetry.strokeFeedbackPresent = strokeFeedbackAvailable;
   telemetry.wifiConnected = WiFi.isConnected();
   telemetry.wifiRssi = telemetry.wifiConnected ? WiFi.RSSI() : 0;
   telemetry.stage = heaterStage;
-  telemetry.targetTemp = configManager.config().targetTemp;
+  telemetry.targetTemp = encoderEditingActive ? encoderDraftTarget : configManager.config().targetTemp;
   telemetry.phase = currentPhase;
   telemetry.boostActive = startBoostActive;
 
-  if (strokeFeedbackDetected) {
+  if (strokeFeedbackAvailable) {
     mainRelayAssumedOn = heaterSupplyState;
   }
 }
@@ -366,14 +384,19 @@ void processEncoder() {
   }
 
   long delta = position - lastEncoderPosition;
-  lastEncoderPosition = position;
+  if (!encoderEditingActive) {
+    encoderEditingActive = true;
+    encoderDraftTarget = configManager.config().targetTemp;
+    Serial.println("[ENC] Zieltemperatur bearbeiten gestartet");
+  }
 
-  float newTarget = configManager.config().targetTemp + static_cast<float>(delta) * TARGET_STEP;
-  newTarget = constrain(newTarget, TARGET_MIN, TARGET_MAX);
-  configManager.config().targetTemp = newTarget;
-  telemetry.targetTemp = newTarget;
-  targetDirty = true;
-  targetDirtyMillis = millis();
+  encoderDraftTarget = constrain(encoderDraftTarget + static_cast<float>(delta) * TARGET_STEP, TARGET_MIN, TARGET_MAX);
+
+  long constrainedPosition = lroundf(encoderDraftTarget / TARGET_STEP);
+  encoder.setPosition(constrainedPosition);
+  lastEncoderPosition = constrainedPosition;
+  telemetry.targetTemp = encoderDraftTarget;
+  encoderLastActivity = millis();
 }
 
 void processEncoderButton() {
@@ -392,6 +415,20 @@ void processEncoderButton() {
         buttonPressStart = now;
         buttonTriggeredReset = false;
       } else {
+        if (buttonPressStart != 0) {
+          unsigned long pressDuration = now - buttonPressStart;
+          if (!buttonTriggeredReset) {
+            if (pressDuration >= ENCODER_LONG_PRESS_MS) {
+              bool desiredState = !heaterRequestOn;
+              Serial.printf("[ENC] Langer Druck erkannt, Heizung %s\n", desiredState ? "AN" : "AUS");
+              cancelEncoderEditing();
+              setHeaterRequest(desiredState);
+            } else {
+              Serial.println("[ENC] Kurzer Druck erkannt, Zieltemperatur übernehmen");
+              commitEncoderTarget();
+            }
+          }
+        }
         buttonPressStart = 0;
         buttonTriggeredReset = false;
       }
@@ -402,6 +439,54 @@ void processEncoderButton() {
       static_cast<long>(now - buttonPressStart) >= static_cast<long>(WIFI_RESET_HOLD_MS)) {
     buttonTriggeredReset = true;
     resetWiFiSettingsAndReboot();
+  }
+}
+
+void commitEncoderTarget() {
+  float committed = encoderEditingActive ? encoderDraftTarget : configManager.config().targetTemp;
+  committed = constrain(committed, TARGET_MIN, TARGET_MAX);
+  float previous = configManager.config().targetTemp;
+  bool changed = fabsf(committed - previous) > 0.001f;
+
+  configManager.config().targetTemp = committed;
+  telemetry.targetTemp = committed;
+
+  if (changed) {
+    targetDirty = true;
+    targetDirtyMillis = millis();
+  }
+
+  encoderEditingActive = false;
+  encoderLastActivity = 0;
+  encoderDraftTarget = committed;
+  syncEncoderToTarget();
+
+  if (changed) {
+    Serial.printf("[ENC] Zieltemperatur gesetzt: %.1f°C\n", committed);
+  }
+}
+
+void cancelEncoderEditing() {
+  if (!encoderEditingActive) {
+    return;
+  }
+  encoderEditingActive = false;
+  encoderLastActivity = 0;
+  encoderDraftTarget = configManager.config().targetTemp;
+  telemetry.targetTemp = encoderDraftTarget;
+  syncEncoderToTarget();
+  Serial.println("[ENC] Bearbeitung verworfen");
+}
+
+void updateEncoderEditingState() {
+  if (!encoderEditingActive) {
+    return;
+  }
+
+  unsigned long now = millis();
+  if (static_cast<long>(now - encoderLastActivity) >= static_cast<long>(ENCODER_EDIT_TIMEOUT_MS)) {
+    Serial.println("[ENC] Bearbeitung aufgrund Inaktivität beendet");
+    cancelEncoderEditing();
   }
 }
 
@@ -713,10 +798,21 @@ void handleControlRequest(AsyncWebServerRequest *request, uint8_t *data, size_t 
   if (doc.containsKey("target_temp")) {
     float value = doc["target_temp"].as<float>();
     value = constrain(value, TARGET_MIN, TARGET_MAX);
+    float previous = configManager.config().targetTemp;
+    bool changed = fabsf(value - previous) > 0.001f;
+
     configManager.config().targetTemp = value;
+    encoderDraftTarget = value;
+    encoderEditingActive = false;
+    encoderLastActivity = 0;
     telemetry.targetTemp = value;
-    targetDirty = true;
-    targetDirtyMillis = millis();
+
+    if (changed) {
+      targetDirty = true;
+      targetDirtyMillis = millis();
+      Serial.printf("[CTRL] Zieltemperatur extern gesetzt: %.1f°C\n", value);
+    }
+
     syncEncoderToTarget();
   }
 
@@ -913,6 +1009,7 @@ void loop() {
   applyRegulation();
   processEncoder();
   processEncoderButton();
+  updateEncoderEditingState();
   saveTargetIfDirty();
   updateDisplay();
 }
