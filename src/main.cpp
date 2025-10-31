@@ -38,6 +38,7 @@ constexpr uint32_t ENCODER_EDIT_TIMEOUT_MS = 30000;
 constexpr uint32_t START_BOOST_DELAY_MS = 120000;
 constexpr uint32_t START_BOOST_PULSE_INTERVAL_MS = 600;
 constexpr uint8_t START_BOOST_PULSES = 10;
+constexpr uint32_t HEATER_ON_COMMAND_DELAY_MS = 5000;
 constexpr uint32_t BUTTON_DEBOUNCE_MS = 50;
 
 constexpr float CURRENT_THRESHOLD_OFF = 0.2f;
@@ -106,6 +107,9 @@ unsigned long startBoostStartMillis = 0;
 unsigned long lastBoostPulseMillis = 0;
 uint8_t boostPulsesSent = 0;
 
+bool heaterOnPulsePending = false;
+unsigned long heaterOnPulseDueMillis = 0;
+
 bool targetDirty = false;
 unsigned long targetDirtyMillis = 0;
 
@@ -143,8 +147,11 @@ void processEncoderButton();
 void evaluatePhase();
 void applyRegulation();
 void handleStartBoost();
+void processPendingHeaterOnCommand();
 void sendStatus(AsyncWebServerRequest *request);
 void handleControlRequest(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total);
+void sendConfig(AsyncWebServerRequest *request);
+void handleConfigUpdate(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total);
 void setupWebServer();
 void setHeaterRequest(bool on);
 void issueStrokePulse();
@@ -158,6 +165,10 @@ void updateEncoderEditingState();
 bool addressesEqual(const uint8_t *lhs, const uint8_t *rhs);
 bool applyStoredSensorAddress(const SensorAddressConfig &config, DeviceAddress &destination);
 bool updateSensorAddressConfig(SensorAddressConfig &config, const DeviceAddress &address);
+bool parseSensorAddressString(const char *text, DeviceAddress &out);
+bool updateTargetTemperature(float value, bool scheduleSave);
+bool isNumeric(JsonVariantConst value);
+bool isBoolean(JsonVariantConst value);
 
 void IRAM_ATTR encoderISR() { encoder.tick(); }
 
@@ -171,6 +182,82 @@ String formatSensorAddress(const uint8_t *address) {
     snprintf(buffer + i * 2, 3, "%02X", address[i]);
   }
   return String(buffer);
+}
+
+bool isNumeric(JsonVariantConst value) {
+  return value.is<int>() || value.is<long>() || value.is<unsigned int>() || value.is<unsigned long>() ||
+         value.is<float>() || value.is<double>();
+}
+
+bool isBoolean(JsonVariantConst value) { return value.is<bool>(); }
+
+bool parseSensorAddressString(const char *text, DeviceAddress &out) {
+  if (text == nullptr) {
+    return false;
+  }
+
+  size_t index = 0;
+  int highNibble = -1;
+
+  for (const char *p = text; *p != '\0'; ++p) {
+    char c = *p;
+    if (c == ':' || c == ' ' || c == '-') {
+      continue;
+    }
+
+    int value = -1;
+    if (c >= '0' && c <= '9') {
+      value = c - '0';
+    } else if (c >= 'a' && c <= 'f') {
+      value = 10 + (c - 'a');
+    } else if (c >= 'A' && c <= 'F') {
+      value = 10 + (c - 'A');
+    }
+
+    if (value < 0) {
+      return false;
+    }
+
+    if (highNibble < 0) {
+      highNibble = value;
+    } else {
+      if (index >= 8) {
+        return false;
+      }
+      out[index++] = static_cast<uint8_t>((highNibble << 4) | value);
+      highNibble = -1;
+    }
+  }
+
+  if (highNibble >= 0 || index != 8) {
+    return false;
+  }
+
+  return true;
+}
+
+bool updateTargetTemperature(float value, bool scheduleSave) {
+  value = constrain(value, TARGET_MIN, TARGET_MAX);
+  float previous = configManager.config().targetTemp;
+  bool changed = fabsf(value - previous) > 0.001f;
+
+  configManager.config().targetTemp = value;
+  telemetry.targetTemp = value;
+  encoderEditingActive = false;
+  encoderLastActivity = 0;
+  syncEncoderToTarget();
+
+  if (scheduleSave) {
+    if (changed) {
+      targetDirty = true;
+      targetDirtyMillis = millis();
+    }
+  } else {
+    targetDirty = false;
+    targetDirtyMillis = 0;
+  }
+
+  return changed;
 }
 
 bool applyStoredSensorAddress(const SensorAddressConfig &config, DeviceAddress &destination) {
@@ -522,16 +609,12 @@ void setHeaterRequest(bool on) {
       mainRelayAssumedOn = true;
     }
     pendingMainRelayOff = false;
-    pulseRelay(RELAY_ON_PIN);
-    startBoostActive = true;
-    startBoostStartMillis = millis();
-    lastBoostPulseMillis = 0;
-    boostPulsesSent = 0;
-    heaterStage = 1;
-    stageChangesInWindow = 0;
-    stageWindowStart = millis();
+    heaterOnPulsePending = true;
+    heaterOnPulseDueMillis = millis() + HEATER_ON_COMMAND_DELAY_MS;
+    Serial.printf("[CTRL] Verzögerter EIN-Befehl (%lums)\n", static_cast<unsigned long>(HEATER_ON_COMMAND_DELAY_MS));
   } else {
     Serial.println("[CTRL] Heater OFF requested");
+    heaterOnPulsePending = false;
     pulseRelay(RELAY_OFF_PIN);
     startBoostActive = false;
     criticalOvershootHoldUntil = 0;
@@ -705,6 +788,29 @@ void applyRegulation() {
   }
 }
 
+void processPendingHeaterOnCommand() {
+  if (!heaterOnPulsePending) {
+    return;
+  }
+
+  unsigned long now = millis();
+  if (static_cast<long>(now - heaterOnPulseDueMillis) < 0) {
+    return;
+  }
+
+  heaterOnPulsePending = false;
+  Serial.println("[CTRL] Verzögerter EIN-Befehl ausgelöst");
+  pulseRelay(RELAY_ON_PIN);
+  startBoostActive = true;
+  startBoostStartMillis = now;
+  lastBoostPulseMillis = 0;
+  boostPulsesSent = 0;
+  heaterStage = 1;
+  telemetry.stage = heaterStage;
+  stageChangesInWindow = 0;
+  stageWindowStart = now;
+}
+
 void handleStartBoost() {
   if (!startBoostActive) {
     return;
@@ -779,6 +885,344 @@ void sendStatus(AsyncWebServerRequest *request) {
   request->send(response);
 }
 
+void sendConfig(AsyncWebServerRequest *request) {
+  AsyncResponseStream *response = request->beginResponseStream("application/json");
+  StaticJsonDocument<1152> doc;
+  const AppConfig &cfg = configManager.config();
+
+  doc["target_temp"] = cfg.targetTemp;
+
+  JsonObject reg = doc.createNestedObject("regulation");
+  reg["delta_down"] = cfg.regulation.deltaDown;
+  reg["delta_up"] = cfg.regulation.deltaUp;
+  reg["delta_up_critical"] = cfg.regulation.deltaUpCritical;
+  reg["min_step_interval"] = cfg.regulation.minStepInterval;
+  reg["stabilize_duration"] = cfg.regulation.stabilizeDuration;
+  reg["max_steps_per_quarter"] = cfg.regulation.maxStepsPerQuarter;
+  reg["exhaust_warn"] = cfg.regulation.exhaustWarn;
+  reg["exhaust_off"] = cfg.regulation.exhaustOff;
+
+  JsonObject telegram = doc.createNestedObject("telegram");
+  telegram["enabled"] = cfg.telegram.enabled;
+  telegram["token"] = cfg.telegram.token;
+  telegram["chat_id"] = cfg.telegram.chatId;
+
+  JsonObject calibration = doc.createNestedObject("calibration");
+  calibration["acs_zero"] = cfg.calibration.acsZero;
+  calibration["acs_sensitivity"] = cfg.calibration.acsSensitivity;
+
+  JsonObject sensors = doc.createNestedObject("sensors");
+  if (cfg.sensors.inside.valid) {
+    sensors["inside"] = formatSensorAddress(cfg.sensors.inside.address);
+  } else {
+    sensors["inside"] = nullptr;
+  }
+  if (cfg.sensors.exhaust.valid) {
+    sensors["exhaust"] = formatSensorAddress(cfg.sensors.exhaust.address);
+  } else {
+    sensors["exhaust"] = nullptr;
+  }
+
+  serializeJson(doc, *response);
+  request->send(response);
+}
+
+void handleConfigUpdate(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+  if (index != 0 || len != total) {
+    return;
+  }
+
+  StaticJsonDocument<1536> doc;
+  DeserializationError error = deserializeJson(doc, data, len);
+  if (error) {
+    request->send(400, "application/json", "{\"error\":\"invalid_json\"}");
+    return;
+  }
+
+  AppConfig &cfg = configManager.config();
+  bool configChanged = false;
+  bool sensorsChanged = false;
+
+  if (doc.containsKey("target_temp")) {
+    JsonVariantConst target = doc["target_temp"];
+    if (!isNumeric(target)) {
+      request->send(400, "application/json", "{\"error\":\"invalid_target_temp\"}");
+      return;
+    }
+
+    bool changed = updateTargetTemperature(target.as<float>(), false);
+    if (changed) {
+      Serial.printf("[CFG] Zieltemperatur aktualisiert: %.1f°C\n", cfg.targetTemp);
+      configChanged = true;
+    }
+  }
+
+  JsonObjectConst reg = doc["regulation"].as<JsonObjectConst>();
+  if (!reg.isNull()) {
+    if (reg.containsKey("delta_down")) {
+      JsonVariantConst value = reg["delta_down"];
+      if (!isNumeric(value)) {
+        request->send(400, "application/json", "{\"error\":\"invalid_regulation_delta_down\"}");
+        return;
+      }
+      float newValue = value.as<float>();
+      if (fabsf(newValue - cfg.regulation.deltaDown) > 0.0001f) {
+        cfg.regulation.deltaDown = newValue;
+        configChanged = true;
+      }
+    }
+
+    if (reg.containsKey("delta_up")) {
+      JsonVariantConst value = reg["delta_up"];
+      if (!isNumeric(value)) {
+        request->send(400, "application/json", "{\"error\":\"invalid_regulation_delta_up\"}");
+        return;
+      }
+      float newValue = value.as<float>();
+      if (fabsf(newValue - cfg.regulation.deltaUp) > 0.0001f) {
+        cfg.regulation.deltaUp = newValue;
+        configChanged = true;
+      }
+    }
+
+    if (reg.containsKey("delta_up_critical")) {
+      JsonVariantConst value = reg["delta_up_critical"];
+      if (!isNumeric(value)) {
+        request->send(400, "application/json", "{\"error\":\"invalid_regulation_delta_up_critical\"}");
+        return;
+      }
+      float newValue = value.as<float>();
+      if (fabsf(newValue - cfg.regulation.deltaUpCritical) > 0.0001f) {
+        cfg.regulation.deltaUpCritical = newValue;
+        configChanged = true;
+      }
+    }
+
+    if (reg.containsKey("min_step_interval")) {
+      JsonVariantConst value = reg["min_step_interval"];
+      if (!isNumeric(value)) {
+        request->send(400, "application/json", "{\"error\":\"invalid_regulation_min_step_interval\"}");
+        return;
+      }
+      uint32_t newValue = value.as<uint32_t>();
+      if (newValue != cfg.regulation.minStepInterval) {
+        cfg.regulation.minStepInterval = newValue;
+        configChanged = true;
+      }
+    }
+
+    if (reg.containsKey("stabilize_duration")) {
+      JsonVariantConst value = reg["stabilize_duration"];
+      if (!isNumeric(value)) {
+        request->send(400, "application/json", "{\"error\":\"invalid_regulation_stabilize_duration\"}");
+        return;
+      }
+      uint32_t newValue = value.as<uint32_t>();
+      if (newValue != cfg.regulation.stabilizeDuration) {
+        cfg.regulation.stabilizeDuration = newValue;
+        configChanged = true;
+      }
+    }
+
+    if (reg.containsKey("max_steps_per_quarter")) {
+      JsonVariantConst value = reg["max_steps_per_quarter"];
+      if (!isNumeric(value)) {
+        request->send(400, "application/json", "{\"error\":\"invalid_regulation_max_steps\"}");
+        return;
+      }
+      uint8_t newValue = static_cast<uint8_t>(value.as<unsigned long>());
+      if (newValue != cfg.regulation.maxStepsPerQuarter) {
+        cfg.regulation.maxStepsPerQuarter = newValue;
+        configChanged = true;
+      }
+    }
+
+    if (reg.containsKey("exhaust_warn")) {
+      JsonVariantConst value = reg["exhaust_warn"];
+      if (!isNumeric(value)) {
+        request->send(400, "application/json", "{\"error\":\"invalid_regulation_exhaust_warn\"}");
+        return;
+      }
+      float newValue = value.as<float>();
+      if (fabsf(newValue - cfg.regulation.exhaustWarn) > 0.0001f) {
+        cfg.regulation.exhaustWarn = newValue;
+        configChanged = true;
+      }
+    }
+
+    if (reg.containsKey("exhaust_off")) {
+      JsonVariantConst value = reg["exhaust_off"];
+      if (!isNumeric(value)) {
+        request->send(400, "application/json", "{\"error\":\"invalid_regulation_exhaust_off\"}");
+        return;
+      }
+      float newValue = value.as<float>();
+      if (fabsf(newValue - cfg.regulation.exhaustOff) > 0.0001f) {
+        cfg.regulation.exhaustOff = newValue;
+        configChanged = true;
+      }
+    }
+  }
+
+  JsonObjectConst telegram = doc["telegram"].as<JsonObjectConst>();
+  if (!telegram.isNull()) {
+    if (telegram.containsKey("enabled")) {
+      JsonVariantConst value = telegram["enabled"];
+      if (!isBoolean(value)) {
+        request->send(400, "application/json", "{\"error\":\"invalid_telegram_enabled\"}");
+        return;
+      }
+      bool newValue = value.as<bool>();
+      if (newValue != cfg.telegram.enabled) {
+        cfg.telegram.enabled = newValue;
+        configChanged = true;
+      }
+    }
+
+    if (telegram.containsKey("token")) {
+      JsonVariantConst value = telegram["token"];
+      if (!value.is<const char *>() && !value.isNull()) {
+        request->send(400, "application/json", "{\"error\":\"invalid_telegram_token\"}");
+        return;
+      }
+      const char *text = value.isNull() ? "" : value.as<const char *>();
+      if (cfg.telegram.token != text) {
+        cfg.telegram.token = text;
+        configChanged = true;
+      }
+    }
+
+    if (telegram.containsKey("chat_id")) {
+      JsonVariantConst value = telegram["chat_id"];
+      if (!value.is<const char *>() && !value.isNull()) {
+        request->send(400, "application/json", "{\"error\":\"invalid_telegram_chat_id\"}");
+        return;
+      }
+      const char *text = value.isNull() ? "" : value.as<const char *>();
+      if (cfg.telegram.chatId != text) {
+        cfg.telegram.chatId = text;
+        configChanged = true;
+      }
+    }
+  }
+
+  JsonObjectConst calibration = doc["calibration"].as<JsonObjectConst>();
+  if (!calibration.isNull()) {
+    if (calibration.containsKey("acs_zero")) {
+      JsonVariantConst value = calibration["acs_zero"];
+      if (!isNumeric(value)) {
+        request->send(400, "application/json", "{\"error\":\"invalid_calibration_acs_zero\"}");
+        return;
+      }
+      float newValue = value.as<float>();
+      if (fabsf(newValue - cfg.calibration.acsZero) > 0.0001f) {
+        cfg.calibration.acsZero = newValue;
+        configChanged = true;
+      }
+    }
+
+    if (calibration.containsKey("acs_sensitivity")) {
+      JsonVariantConst value = calibration["acs_sensitivity"];
+      if (!isNumeric(value)) {
+        request->send(400, "application/json", "{\"error\":\"invalid_calibration_acs_sensitivity\"}");
+        return;
+      }
+      float newValue = value.as<float>();
+      if (fabsf(newValue - cfg.calibration.acsSensitivity) > 0.0001f) {
+        cfg.calibration.acsSensitivity = newValue;
+        configChanged = true;
+      }
+    }
+  }
+
+  JsonObjectConst sensors = doc["sensors"].as<JsonObjectConst>();
+  if (!sensors.isNull()) {
+    if (sensors.containsKey("inside")) {
+      JsonVariantConst value = sensors["inside"];
+      if (value.isNull()) {
+        if (cfg.sensors.inside.valid) {
+          cfg.sensors.inside.valid = false;
+          memset(cfg.sensors.inside.address, 0, sizeof(DeviceAddress));
+          configChanged = true;
+          sensorsChanged = true;
+          Serial.println("[CFG] Innenfühler-Adresse gelöscht");
+        }
+      } else if (value.is<const char *>()) {
+        DeviceAddress parsed{};
+        if (!parseSensorAddressString(value.as<const char *>(), parsed)) {
+          request->send(400, "application/json", "{\"error\":\"invalid_sensor_inside\"}");
+          return;
+        }
+        if (!cfg.sensors.inside.valid || memcmp(cfg.sensors.inside.address, parsed, sizeof(DeviceAddress)) != 0) {
+          memcpy(cfg.sensors.inside.address, parsed, sizeof(DeviceAddress));
+          cfg.sensors.inside.valid = true;
+          configChanged = true;
+          sensorsChanged = true;
+          Serial.printf("[CFG] Innenfühler-Adresse aktualisiert: %s\n", formatSensorAddress(parsed).c_str());
+        }
+      } else {
+        request->send(400, "application/json", "{\"error\":\"invalid_sensor_inside\"}");
+        return;
+      }
+    }
+
+    if (sensors.containsKey("exhaust")) {
+      JsonVariantConst value = sensors["exhaust"];
+      if (value.isNull()) {
+        if (cfg.sensors.exhaust.valid) {
+          cfg.sensors.exhaust.valid = false;
+          memset(cfg.sensors.exhaust.address, 0, sizeof(DeviceAddress));
+          configChanged = true;
+          sensorsChanged = true;
+          Serial.println("[CFG] Abluftfühler-Adresse gelöscht");
+        }
+      } else if (value.is<const char *>()) {
+        DeviceAddress parsed{};
+        if (!parseSensorAddressString(value.as<const char *>(), parsed)) {
+          request->send(400, "application/json", "{\"error\":\"invalid_sensor_exhaust\"}");
+          return;
+        }
+        if (!cfg.sensors.exhaust.valid || memcmp(cfg.sensors.exhaust.address, parsed, sizeof(DeviceAddress)) != 0) {
+          memcpy(cfg.sensors.exhaust.address, parsed, sizeof(DeviceAddress));
+          cfg.sensors.exhaust.valid = true;
+          configChanged = true;
+          sensorsChanged = true;
+          Serial.printf("[CFG] Abluftfühler-Adresse aktualisiert: %s\n", formatSensorAddress(parsed).c_str());
+        }
+      } else {
+        request->send(400, "application/json", "{\"error\":\"invalid_sensor_exhaust\"}");
+        return;
+      }
+    }
+  }
+
+  if (configChanged) {
+    if (!configManager.save()) {
+      request->send(500, "application/json", "{\"error\":\"save_failed\"}");
+      return;
+    }
+    Serial.println("[CFG] Konfiguration gespeichert");
+  }
+
+  if (sensorsChanged) {
+    if (cfg.sensors.inside.valid && applyStoredSensorAddress(cfg.sensors.inside, insideSensor)) {
+      insideSensorPresent = true;
+      tempSensors.setResolution(insideSensor, 11);
+    } else {
+      insideSensorPresent = false;
+    }
+
+    if (cfg.sensors.exhaust.valid && applyStoredSensorAddress(cfg.sensors.exhaust, exhaustSensor)) {
+      exhaustSensorPresent = true;
+      tempSensors.setResolution(exhaustSensor, 11);
+    } else {
+      exhaustSensorPresent = false;
+    }
+  }
+
+  request->send(204);
+}
+
 void handleControlRequest(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
   if (index != 0 || len != total) {
     return;
@@ -796,24 +1240,16 @@ void handleControlRequest(AsyncWebServerRequest *request, uint8_t *data, size_t 
   }
 
   if (doc.containsKey("target_temp")) {
-    float value = doc["target_temp"].as<float>();
-    value = constrain(value, TARGET_MIN, TARGET_MAX);
-    float previous = configManager.config().targetTemp;
-    bool changed = fabsf(value - previous) > 0.001f;
-
-    configManager.config().targetTemp = value;
-    encoderDraftTarget = value;
-    encoderEditingActive = false;
-    encoderLastActivity = 0;
-    telemetry.targetTemp = value;
-
-    if (changed) {
-      targetDirty = true;
-      targetDirtyMillis = millis();
-      Serial.printf("[CTRL] Zieltemperatur extern gesetzt: %.1f°C\n", value);
+    JsonVariantConst target = doc["target_temp"];
+    if (!isNumeric(target)) {
+      request->send(400, "application/json", "{\"error\":\"invalid_target_temp\"}");
+      return;
     }
 
-    syncEncoderToTarget();
+    bool changed = updateTargetTemperature(target.as<float>(), true);
+    if (changed) {
+      Serial.printf("[CTRL] Zieltemperatur extern gesetzt: %.1f°C\n", configManager.config().targetTemp);
+    }
   }
 
   if (doc.containsKey("mode")) {
@@ -850,6 +1286,13 @@ void setupWebServer() {
   server.on("/api/control", HTTP_POST, [](AsyncWebServerRequest *request) {}, nullptr,
             [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
               handleControlRequest(request, data, len, index, total);
+            });
+
+  server.on("/api/config", HTTP_GET, [](AsyncWebServerRequest *request) { sendConfig(request); });
+
+  server.on("/api/config", HTTP_POST, [](AsyncWebServerRequest *request) {}, nullptr,
+            [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+              handleConfigUpdate(request, data, len, index, total);
             });
 
   server.on("/api/wifi/reset", HTTP_POST, [](AsyncWebServerRequest *request) {
@@ -1002,6 +1445,8 @@ void loop() {
   }
 
   processRelayPulses();
+
+  processPendingHeaterOnCommand();
 
   updateTelemetry();
   evaluatePhase();

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sunster Heater Einstellungen</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header class="page-header">
+        <div>
+          <h1>Einstellungen</h1>
+          <p class="status-line">Alle Parameter der Heizung konfigurieren und speichern.</p>
+        </div>
+        <div class="header-actions">
+          <a class="button-link ghost-link" href="/">Zurück zur Übersicht</a>
+        </div>
+      </header>
+
+      <section id="settingsAlert" class="alert" hidden></section>
+
+      <form id="configForm" class="settings-form">
+        <section class="form-card">
+          <h2>Allgemein</h2>
+          <div class="form-grid">
+            <label>
+              <span>Zieltemperatur (°C)</span>
+              <input type="number" name="target_temp" id="targetTempInput" step="0.5" min="10" max="28" required />
+            </label>
+          </div>
+        </section>
+
+        <section class="form-card">
+          <h2>Regelparameter</h2>
+          <div class="form-grid">
+            <label>
+              <span>Absenkung (Δ runter)</span>
+              <input type="number" name="delta_down" id="deltaDownInput" step="0.1" min="0" required />
+            </label>
+            <label>
+              <span>Anhebung (Δ hoch)</span>
+              <input type="number" name="delta_up" id="deltaUpInput" step="0.1" min="0" required />
+            </label>
+            <label>
+              <span>Kritische Anhebung</span>
+              <input type="number" name="delta_up_critical" id="deltaUpCriticalInput" step="0.1" min="0" required />
+            </label>
+            <label>
+              <span>Mindestabstand Schritte (s)</span>
+              <input type="number" name="min_step_interval" id="minStepIntervalInput" step="1" min="0" required />
+            </label>
+            <label>
+              <span>Stabilisierungsdauer (s)</span>
+              <input type="number" name="stabilize_duration" id="stabilizeDurationInput" step="1" min="0" required />
+            </label>
+            <label>
+              <span>Max. Schritte je 15&nbsp;min</span>
+              <input type="number" name="max_steps_per_quarter" id="maxStepsInput" step="1" min="0" max="10" required />
+            </label>
+            <label>
+              <span>Warnung Abgastemperatur (°C)</span>
+              <input type="number" name="exhaust_warn" id="exhaustWarnInput" step="0.5" min="0" required />
+            </label>
+            <label>
+              <span>Abschaltung Abgastemperatur (°C)</span>
+              <input type="number" name="exhaust_off" id="exhaustOffInput" step="0.5" min="0" required />
+            </label>
+          </div>
+        </section>
+
+        <section class="form-card">
+          <h2>Telegram</h2>
+          <div class="form-grid">
+            <label class="checkbox-field">
+              <input type="checkbox" name="telegram_enabled" id="telegramEnabledInput" />
+              <span>Benachrichtigungen aktivieren</span>
+            </label>
+            <label>
+              <span>Bot Token</span>
+              <input type="text" name="telegram_token" id="telegramTokenInput" autocomplete="off" />
+            </label>
+            <label>
+              <span>Chat-ID</span>
+              <input type="text" name="telegram_chat_id" id="telegramChatIdInput" autocomplete="off" />
+            </label>
+          </div>
+        </section>
+
+        <section class="form-card">
+          <h2>Sensoren</h2>
+          <div class="form-grid">
+            <label>
+              <span>Innenfühler Adresse</span>
+              <input type="text" name="sensor_inside" id="sensorInsideInput" placeholder="0000000000000000" pattern="[0-9A-Fa-f:\s-]{0,23}" />
+            </label>
+            <label>
+              <span>Abluftfühler Adresse</span>
+              <input type="text" name="sensor_exhaust" id="sensorExhaustInput" placeholder="0000000000000000" pattern="[0-9A-Fa-f:\s-]{0,23}" />
+            </label>
+          </div>
+        </section>
+
+        <section class="form-card">
+          <h2>Stromsensor</h2>
+          <div class="form-grid">
+            <label>
+              <span>Nullpunkt ACS712 (V)</span>
+              <input type="number" name="acs_zero" id="acsZeroInput" step="0.01" required />
+            </label>
+            <label>
+              <span>Empfindlichkeit ACS712 (V/A)</span>
+              <input type="number" name="acs_sensitivity" id="acsSensitivityInput" step="0.01" min="0" required />
+            </label>
+          </div>
+        </section>
+
+        <div class="form-actions">
+          <button type="submit" id="configSave">Änderungen speichern</button>
+          <button type="button" class="ghost" id="configReload">Änderungen verwerfen</button>
+        </div>
+      </form>
+    </main>
+    <script src="/settings.js"></script>
+  </body>
+</html>
