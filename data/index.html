@@ -21,6 +21,7 @@
             <li>Strom: <span id="current">--</span> A</li>
             <li>Phase: <span id="phase">--</span></li>
             <li>Stufe: <span id="level">--</span></li>
+            <li>Betrieb: <span id="mode">--</span></li>
             <li>Versorgung: <span id="strokeState">--</span></li>
           </ul>
         </article>
@@ -36,9 +37,10 @@
           <div class="buttons">
             <button data-command="heater_on">EIN</button>
             <button data-command="heater_off">AUS</button>
-            <button data-command="plus">+</button>
-            <button data-command="minus">−</button>
-            <button data-command="stroke">Stromstoß</button>
+            <button data-command="mode_auto" id="modeAuto">Automatik</button>
+            <button data-command="mode_manual" id="modeManual">Manuell</button>
+            <button data-command="plus" id="stageUp">+</button>
+            <button data-command="minus" id="stageDown">−</button>
           </div>
         </article>
         <article>

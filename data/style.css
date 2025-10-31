@@ -57,9 +57,14 @@ input[type="range"] {
   width: 100%;
 }
 
+input[type="range"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .buttons {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 0.75rem;
 }
 
@@ -74,13 +79,21 @@ input[type="range"] {
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
-.buttons button:hover {
+.buttons button:not(:disabled):hover {
   transform: translateY(-2px);
   box-shadow: 0 12px 20px rgba(56, 189, 248, 0.4);
 }
 
-.buttons button:last-child {
-  grid-column: span 2;
+.buttons button.active {
+  background: #22d3ee;
+  box-shadow: 0 12px 20px rgba(34, 211, 238, 0.4);
+}
+
+.buttons button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
 }
 
 button#reloadConfig,

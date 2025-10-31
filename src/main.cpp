@@ -45,7 +45,7 @@ constexpr float CURRENT_THRESHOLD_PREHEAT = 5.0f;
 constexpr float EXHAUST_THRESHOLD_HEATING = 40.0f;
 constexpr float EXHAUST_THRESHOLD_COOLDOWN = 50.0f;
 
-constexpr uint32_t FAILSTART_TIMEOUT_MS = 90000;
+constexpr uint32_t FAILSTART_TIMEOUT_MS = 180000;
 constexpr uint32_t STAGE_WINDOW_MS = 15UL * 60UL * 1000UL;
 
 AsyncWebServer server(80);
@@ -77,6 +77,7 @@ struct TelemetryState {
   uint8_t stage = 1;
   float targetTemp = TARGET_MIN;
   bool boostActive = false;
+  bool manualMode = false;
 };
 
 TelemetryState telemetry;
@@ -84,6 +85,9 @@ TelemetryState telemetry;
 bool heaterRequestOn = false;
 bool heaterSupplyState = false;
 uint8_t heaterStage = 1;
+bool manualControlMode = false;
+bool mainRelayAssumedOn = false;
+bool pendingMainRelayOff = false;
 
 unsigned long lastSensorPoll = 0;
 unsigned long lastDisplayUpdate = 0;
@@ -294,6 +298,7 @@ void updateTelemetry() {
 
   telemetry.heaterSupplyOn = heaterSupplyState;
   telemetry.heaterRequest = heaterRequestOn;
+  telemetry.manualMode = manualControlMode;
   telemetry.strokeFeedbackPresent = strokeFeedbackDetected;
   telemetry.wifiConnected = WiFi.isConnected();
   telemetry.wifiRssi = telemetry.wifiConnected ? WiFi.RSSI() : 0;
@@ -301,6 +306,10 @@ void updateTelemetry() {
   telemetry.targetTemp = configManager.config().targetTemp;
   telemetry.phase = currentPhase;
   telemetry.boostActive = startBoostActive;
+
+  if (strokeFeedbackDetected) {
+    mainRelayAssumedOn = heaterSupplyState;
+  }
 }
 
 void updateDisplay() {
@@ -422,6 +431,12 @@ void setHeaterRequest(bool on) {
   if (on) {
     criticalOvershootHoldUntil = 0;
     Serial.println("[CTRL] Heater ON requested");
+    if (!mainRelayAssumedOn) {
+      Serial.println("[CTRL] Hauptrelais EIN (automatisch)");
+      issueStrokePulse();
+      mainRelayAssumedOn = true;
+    }
+    pendingMainRelayOff = false;
     pulseRelay(RELAY_ON_PIN);
     startBoostActive = true;
     startBoostStartMillis = millis();
@@ -435,6 +450,9 @@ void setHeaterRequest(bool on) {
     pulseRelay(RELAY_OFF_PIN);
     startBoostActive = false;
     criticalOvershootHoldUntil = 0;
+    if (mainRelayAssumedOn) {
+      pendingMainRelayOff = true;
+    }
   }
 }
 
@@ -540,6 +558,15 @@ void evaluatePhase() {
   }
 
   telemetry.phase = currentPhase;
+
+  if (pendingMainRelayOff && currentPhase == HeaterPhase::Off && !heaterRequestOn &&
+      (isnan(telemetry.current) || telemetry.current < CURRENT_THRESHOLD_OFF) &&
+      (!isValidTemp(telemetry.exhaustTemp) || telemetry.exhaustTemp < EXHAUST_THRESHOLD_COOLDOWN)) {
+    Serial.println("[CTRL] Hauptrelais AUS nach sicherem Stopp");
+    issueStrokePulse();
+    pendingMainRelayOff = false;
+    mainRelayAssumedOn = false;
+  }
 }
 
 void applyRegulation() {
@@ -552,6 +579,10 @@ void applyRegulation() {
   const AppConfig &cfg = configManager.config();
 
   if (!heaterRequestOn) {
+    return;
+  }
+
+  if (manualControlMode) {
     return;
   }
 
@@ -648,6 +679,7 @@ void sendStatus(AsyncWebServerRequest *request) {
   doc["heater_request"] = telemetry.heaterRequest;
   doc["stroke_feedback"] = telemetry.strokeFeedbackPresent;
   doc["boost_active"] = telemetry.boostActive;
+  doc["mode"] = telemetry.manualMode ? "manual" : "auto";
   doc["uptime"] = millis() / 1000;
   doc["hostname"] = DEVICE_HOSTNAME;
 
@@ -688,14 +720,28 @@ void handleControlRequest(AsyncWebServerRequest *request, uint8_t *data, size_t 
     syncEncoderToTarget();
   }
 
+  if (doc.containsKey("mode")) {
+    const char *mode = doc["mode"].as<const char *>();
+    if (mode != nullptr) {
+      bool requestedManual = strcmp(mode, "manual") == 0;
+      if (requestedManual != manualControlMode) {
+        manualControlMode = requestedManual;
+        telemetry.manualMode = manualControlMode;
+        Serial.printf("[CTRL] Betriebsart gewechselt: %s\n", manualControlMode ? "Manuell" : "Automatik");
+      }
+    }
+  }
+
   if (doc.containsKey("command")) {
     const char *cmd = doc["command"].as<const char *>();
     if (strcmp(cmd, "plus") == 0) {
-      requestStageChange(+1, true);
+      if (manualControlMode) {
+        requestStageChange(+1, true);
+      }
     } else if (strcmp(cmd, "minus") == 0) {
-      requestStageChange(-1, true);
-    } else if (strcmp(cmd, "stroke") == 0) {
-      issueStrokePulse();
+      if (manualControlMode) {
+        requestStageChange(-1, true);
+      }
     }
   }
 
@@ -703,8 +749,6 @@ void handleControlRequest(AsyncWebServerRequest *request, uint8_t *data, size_t 
 }
 
 void setupWebServer() {
-  server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
-
   server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) { sendStatus(request); });
 
   server.on("/api/control", HTTP_POST, [](AsyncWebServerRequest *request) {}, nullptr,
@@ -716,6 +760,8 @@ void setupWebServer() {
     request->send(204);
     resetWiFiSettingsAndReboot();
   });
+
+  server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
 
   server.onNotFound([](AsyncWebServerRequest *request) { request->send(404, "text/plain", "Not found"); });
 
