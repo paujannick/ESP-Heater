@@ -8,45 +8,82 @@
   </head>
   <body>
     <main class="container">
-      <header>
-        <h1>Sunster 8 kW Diesel Heater</h1>
-        <p class="status">Verbindung: <span id="wifi"></span></p>
+      <header class="page-header">
+        <div>
+          <h1>Sunster 8 kW Diesel Heater</h1>
+          <p class="status-line">
+            WLAN: <span id="wifi" class="badge">--</span>
+            <span id="ip" class="badge badge-secondary">--</span>
+          </p>
+        </div>
+        <div class="heater-state" id="heaterState">Heizung unbekannt</div>
       </header>
+
+      <section id="alert" class="alert" hidden></section>
+
       <section class="grid">
         <article>
-          <h2>Messwerte</h2>
-          <ul>
-            <li>Innen: <span id="insideTemp">--</span> °C</li>
-            <li>Abluft: <span id="exhaustTemp">--</span> °C</li>
-            <li>Strom: <span id="current">--</span> A</li>
-            <li>Phase: <span id="phase">--</span></li>
-            <li>Stufe: <span id="level">--</span></li>
-            <li>Betrieb: <span id="mode">--</span></li>
-            <li>Versorgung: <span id="strokeState">--</span></li>
-          </ul>
+          <h2>Aktuelle Werte</h2>
+          <dl class="metrics">
+            <div>
+              <dt>Innen</dt>
+              <dd><span id="insideTemp">--</span> °C</dd>
+            </div>
+            <div>
+              <dt>Abluft</dt>
+              <dd><span id="exhaustTemp">--</span> °C</dd>
+            </div>
+            <div>
+              <dt>Stromaufnahme</dt>
+              <dd><span id="current">--</span> A</dd>
+            </div>
+            <div>
+              <dt>Phase</dt>
+              <dd><span id="phase">--</span></dd>
+            </div>
+            <div>
+              <dt>Stufe</dt>
+              <dd><span id="level">--</span></dd>
+            </div>
+            <div>
+              <dt>Betriebsart</dt>
+              <dd><span id="mode">--</span></dd>
+            </div>
+            <div>
+              <dt>Versorgung</dt>
+              <dd><span id="strokeState">--</span></dd>
+            </div>
+          </dl>
         </article>
+
         <article>
           <h2>Solltemperatur</h2>
-          <div class="target">
+          <p class="target">
             <span id="targetTemp">--</span> °C
+          </p>
+          <div class="slider-row">
+            <button class="slider-btn" id="targetDown" aria-label="Solltemperatur verringern">−</button>
+            <input type="range" min="10" max="28" step="0.5" id="targetSlider" />
+            <button class="slider-btn" id="targetUp" aria-label="Solltemperatur erhöhen">+</button>
           </div>
-          <input type="range" min="10" max="28" step="0.5" id="targetSlider" />
         </article>
+
         <article>
           <h2>Steuerung</h2>
-          <div class="buttons">
-            <button data-command="heater_on">EIN</button>
-            <button data-command="heater_off">AUS</button>
+          <div class="buttons control-buttons">
+            <button data-command="heater_on" id="heaterOn">Heizung EIN</button>
+            <button data-command="heater_off" id="heaterOff">Heizung AUS</button>
             <button data-command="mode_auto" id="modeAuto">Automatik</button>
             <button data-command="mode_manual" id="modeManual">Manuell</button>
-            <button data-command="plus" id="stageUp">+</button>
-            <button data-command="minus" id="stageDown">−</button>
+            <button data-command="plus" id="stageUp">Stufe +</button>
+            <button data-command="minus" id="stageDown">Stufe −</button>
           </div>
         </article>
+
         <article>
-          <h2>Konfiguration</h2>
-          <button id="reloadConfig">Aktualisieren</button>
-          <button id="wifiReset">WLAN neu einrichten</button>
+          <h2>Wartung</h2>
+          <button id="reloadConfig" class="ghost">Status aktualisieren</button>
+          <button id="wifiReset" class="danger">WLAN neu einrichten</button>
         </article>
       </section>
     </main>

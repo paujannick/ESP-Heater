@@ -1,124 +1,273 @@
 :root {
   color-scheme: dark light;
   font-family: "Inter", system-ui, sans-serif;
-  background: #0f172a;
+  background: radial-gradient(circle at top, #1d293b 0%, #0f172a 60%, #020617 100%);
   color: #e2e8f0;
 }
 
 body {
   margin: 0;
+  min-height: 100vh;
 }
 
 .container {
-  max-width: 960px;
+  max-width: 1100px;
   margin: 0 auto;
-  padding: 2rem;
-}
-
-header {
+  padding: 2rem clamp(1.5rem, 3vw, 3rem);
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  margin-bottom: 1.5rem;
+  gap: 1.5rem;
 }
 
-.status {
-  font-size: 0.9rem;
-  opacity: 0.8;
+.page-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 1.25rem;
+  align-items: center;
+}
+
+.status-line {
+  font-size: 0.95rem;
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.75rem;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.18);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+.badge.badge-secondary {
+  opacity: 0.75;
+}
+
+.heater-state {
+  padding: 0.75rem 1.5rem;
+  border-radius: 999px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: rgba(34, 197, 94, 0.12);
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  color: #4ade80;
+  min-width: 200px;
+  text-align: center;
+}
+
+.heater-state.off {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.35);
+  color: #fca5a5;
+}
+
+.heater-state.unknown {
+  background: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.35);
+  color: #cbd5f5;
+}
+
+.alert {
+  border-radius: 14px;
+  padding: 0.9rem 1.2rem;
+  background: rgba(248, 113, 113, 0.14);
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  color: #fecaca;
+  font-size: 0.95rem;
+  line-height: 1.5;
 }
 
 .grid {
   display: grid;
   gap: 1.5rem;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
 }
 
 article {
-  background: rgba(15, 23, 42, 0.7);
-  border: 1px solid rgba(148, 163, 184, 0.3);
-  border-radius: 12px;
-  padding: 1.5rem;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.3);
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 18px;
+  padding: 1.75rem;
+  box-shadow: 0 24px 60px rgba(2, 6, 23, 0.35);
+  backdrop-filter: blur(10px);
 }
 
 h1,
 h2 {
-  margin-top: 0;
+  margin: 0;
+}
+
+.metrics {
+  display: grid;
+  gap: 1rem;
+  margin: 1.5rem 0 0;
+}
+
+.metrics div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  border-bottom: 1px dashed rgba(148, 163, 184, 0.25);
+  padding-bottom: 0.6rem;
+}
+
+.metrics div:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.metrics dt {
+  font-size: 0.95rem;
+  color: rgba(226, 232, 240, 0.75);
+}
+
+.metrics dd {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
 }
 
 .target {
-  font-size: 3rem;
+  font-size: clamp(2.4rem, 4vw, 3.2rem);
   font-weight: 700;
   text-align: center;
-  margin-bottom: 1rem;
+  margin: 0 0 1.4rem;
+}
+
+.slider-row {
+  display: grid;
+  grid-template-columns: 44px 1fr 44px;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.slider-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(148, 163, 184, 0.18);
+  color: inherit;
+  font-size: 1.4rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.slider-btn:active {
+  transform: scale(0.92);
 }
 
 input[type="range"] {
   width: 100%;
+  accent-color: #22d3ee;
 }
 
-input[type="range"]:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.control-buttons {
+  margin-top: 1.4rem;
 }
 
 .buttons {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.9rem;
 }
 
 .buttons button {
-  padding: 0.75rem;
-  font-size: 1.2rem;
-  border-radius: 999px;
-  border: none;
+  padding: 0.85rem;
+  font-size: 1.05rem;
+  border-radius: 14px;
+  border: 1px solid transparent;
   color: #0f172a;
-  background: #38bdf8;
+  background: linear-gradient(135deg, #38bdf8, #22d3ee);
   cursor: pointer;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition: transform 0.15s ease, box-shadow 0.2s ease, filter 0.2s ease;
+  font-weight: 600;
 }
 
 .buttons button:not(:disabled):hover {
   transform: translateY(-2px);
-  box-shadow: 0 12px 20px rgba(56, 189, 248, 0.4);
+  box-shadow: 0 15px 25px rgba(34, 211, 238, 0.45);
 }
 
 .buttons button.active {
-  background: #22d3ee;
-  box-shadow: 0 12px 20px rgba(34, 211, 238, 0.4);
+  filter: brightness(1.1);
+  box-shadow: 0 18px 30px rgba(34, 211, 238, 0.55);
 }
 
 .buttons button:disabled {
-  opacity: 0.55;
+  opacity: 0.45;
   cursor: not-allowed;
   box-shadow: none;
   transform: none;
 }
 
-button#reloadConfig,
-button#wifiReset {
+button.ghost,
+button.danger {
   width: 100%;
-  padding: 0.65rem 1rem;
+  padding: 0.75rem 1rem;
   border-radius: 12px;
-  border: 1px solid rgba(148, 163, 184, 0.4);
+  border: 1px solid rgba(148, 163, 184, 0.35);
   background: transparent;
   color: inherit;
   cursor: pointer;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.75rem;
+  transition: border-color 0.2s ease, color 0.2s ease;
 }
 
-button#wifiReset {
-  border-color: rgba(248, 113, 113, 0.6);
+button.ghost:hover {
+  border-color: rgba(148, 163, 184, 0.55);
+}
+
+button.danger {
+  border-color: rgba(248, 113, 113, 0.5);
   color: #fca5a5;
 }
 
-@media (max-width: 600px) {
+button.danger:hover {
+  border-color: rgba(248, 113, 113, 0.75);
+}
+
+.loading {
+  position: relative;
+  pointer-events: none;
+}
+
+.loading::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: rgba(15, 23, 42, 0.45);
+  border: 2px solid rgba(34, 211, 238, 0.6);
+  animation: pulse 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes pulse {
+  from {
+    opacity: 0.4;
+  }
+  to {
+    opacity: 0.9;
+  }
+}
+
+@media (max-width: 720px) {
   .container {
-    padding: 1rem;
+    padding: 1.5rem;
   }
 
-  .target {
-    font-size: 2.2rem;
+  .buttons {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .metrics {
+    gap: 0.8rem;
   }
 }
